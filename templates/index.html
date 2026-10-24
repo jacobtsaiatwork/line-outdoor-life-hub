@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🧭 外出生活三合一超級選單 LINE Bot (美食抽籤 × 熱量控制 × 附近洗手間)</title>
+    <style>
+        :root {
+            --bg-dark: #0f172a;
+            --card-dark: #1e293b;
+            --accent-food: #ea580c;
+            --accent-cal: #10b981;
+            --accent-toilet: #0284c7;
+            --text-light: #f8fafc;
+            --text-muted: #94a3b8;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: "Microsoft JhengHei", system-ui, sans-serif; }
+        body { background: var(--bg-dark); color: var(--text-light); line-height: 1.6; padding: 24px; }
+        .container { max-width: 1120px; margin: 0 auto; }
+        .hero {
+            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+            border: 1px solid #334155;
+            border-radius: 20px;
+            padding: 32px;
+            margin-bottom: 24px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+        }
+        .badge {
+            display: inline-block;
+            background: rgba(56, 189, 248, 0.15);
+            color: #38bdf8;
+            padding: 4px 14px;
+            border-radius: 999px;
+            font-size: 0.85rem;
+            font-weight: 700;
+            margin-bottom: 12px;
+        }
+        h1 { font-size: 2rem; margin-bottom: 10px; }
+        .subtitle { color: var(--text-muted); font-size: 1.05rem; }
+        .grid-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; margin-bottom: 24px; }
+        .card {
+            background: var(--card-dark);
+            border-radius: 16px;
+            padding: 24px;
+            border-top: 4px solid #475569;
+        }
+        .card.food { border-top-color: var(--accent-food); }
+        .card.cal { border-top-color: var(--accent-cal); }
+        .card.toilet { border-top-color: var(--accent-toilet); }
+        .card h2 { font-size: 1.25rem; margin-bottom: 10px; }
+        .card p { color: var(--text-muted); font-size: 0.95rem; margin-bottom: 14px; }
+        .btn-group { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+        button {
+            border: none;
+            border-radius: 10px;
+            padding: 10px 16px;
+            font-weight: 700;
+            cursor: pointer;
+            color: #fff;
+            transition: opacity 0.2s;
+        }
+        button:hover { opacity: 0.9; }
+        .btn-food { background: var(--accent-food); }
+        .btn-cal { background: var(--accent-cal); }
+        .btn-toilet { background: var(--accent-toilet); }
+        .sim-box {
+            background: var(--card-dark);
+            border: 1px solid #334155;
+            border-radius: 16px;
+            padding: 24px;
+        }
+        pre {
+            background: #090d16;
+            color: #a7f3d0;
+            padding: 16px;
+            border-radius: 12px;
+            overflow-x: auto;
+            font-size: 0.88rem;
+            margin-top: 16px;
+            max-height: 420px;
+        }
+        .rm-gallery { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-top: 16px; }
+        .rm-gallery img { width: 100%; border-radius: 12px; border: 2px solid #334155; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="hero">
+            <span class="badge">Outdoor Life 3-in-1 Super Hub LINE Bot</span>
+            <h1>🧭 美食抽籤 × 熱量控制 × 附近洗手間『外出生活三合一超級選單』</h1>
+            <p class="subtitle">整合 Rich Menu Alias 多頁籤秒速切換、依剩餘熱量智慧抽不爆卡美食、抽中美食一鍵記熱量，以及 GPS 定位一次傳送雙模組智慧共用！</p>
+        </div>
+
+        <div class="grid-3">
+            <div class="card food">
+                <h2>🍽️ 連動 1：依剩餘熱量智慧抽美食</h2>
+                <p>自動查詢您在「熱量管家」中今日剩餘卡路里額度，優先推薦不爆卡的人氣美食盲盒！</p>
+                <div class="btn-group">
+                    <button class="btn-food" onclick="simText('🥗 依剩餘熱量抽美食')">🥗 依剩餘熱量抽美食</button>
+                    <button class="btn-food" onclick="simText('隨便吃什麼')">🎲 隨便抽一個</button>
+                </div>
+            </div>
+
+            <div class="card cal">
+                <h2>🔥 連動 2：一鍵記熱量 & AI 營養師</h2>
+                <p>抽中美食後免打字、免拍照，點擊卡片按鈕一鍵寫入今日飲食紀錄並彈出更新後熱量儀表板！</p>
+                <div class="btn-group">
+                    <button class="btn-cal" onclick="simPostback('action=eat_this&food_name=舒肥嫩雞胸健康水煮餐&calories=420&protein=38&carbs=45&fat=9')">🔥 模擬一鍵記入熱量 (+420卡)</button>
+                    <button class="btn-cal" onclick="simText('一碗滷肉飯加燙青菜')">✍️ 算「一碗滷肉飯加燙青菜」</button>
+                    <button class="btn-cal" onclick="simText('今日熱量')">📊 今日熱量儀表板</button>
+                </div>
+            </div>
+
+            <div class="card toilet">
+                <h2>🚻 連動 3：GPS 一次傳送，雙模組共用</h2>
+                <p>傳送一次 LINE 定位，同時支援找周邊餐廳與友善洗手間（含 24H/無障礙/尿布檯標示），一鍵切換免重傳座標！</p>
+                <div class="btn-group">
+                    <button class="btn-toilet" onclick="simLocation('toilet')">📍 傳送定位找洗手間</button>
+                    <button class="btn-food" onclick="simPostback('action=switch_gps_mode&target=food')">🔄 用同一座標改找附近美食</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="sim-box">
+            <h2>🧪 三合一跨模組即時模擬測試台</h2>
+            <pre id="output">點擊上方任一連動按鈕，即時檢視 LINE Bot 跨模組路由與 Flex Message JSON 回應...</pre>
+        </div>
+
+        <div class="sim-box" style="margin-top: 24px;">
+            <h2>📱 LINE 多頁籤圖文選單預覽 (Rich Menu Alias 3-Tab Switcher)</h2>
+            <div class="rm-gallery">
+                <div>
+                    <p style="margin-bottom:6px;font-weight:bold;color:#fb923c;">Tab 1: richmenu-alias-food (美食盲盒)</p>
+                    <img src="/static/richmenu_food.png" alt="Food Tab Rich Menu">
+                </div>
+                <div>
+                    <p style="margin-bottom:6px;font-weight:bold;color:#34d399;">Tab 2: richmenu-alias-calorie (熱量管家)</p>
+                    <img src="/static/richmenu_calorie.png" alt="Calorie Tab Rich Menu">
+                </div>
+                <div>
+                    <p style="margin-bottom:6px;font-weight:bold;color:#38bdf8;">Tab 3: richmenu-alias-toilet (洗手間雷達)</p>
+                    <img src="/static/richmenu_toilet.png" alt="Toilet Tab Rich Menu">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        async function simText(text) {
+            const res = await fetch('/api/simulate/text', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({user_id: 'web_demo_user', text})
+            });
+            const data = await res.json();
+            document.getElementById('output').textContent = JSON.stringify(data, null, 2);
+        }
+        async function simPostback(postbackData) {
+            const res = await fetch('/api/simulate/postback', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({user_id: 'web_demo_user', data: postbackData})
+            });
+            const data = await res.json();
+            document.getElementById('output').textContent = JSON.stringify(data, null, 2);
+        }
+        async function simLocation(mode) {
+            const res = await fetch('/api/simulate/location', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({user_id: 'web_demo_user', latitude: 25.0330, longitude: 121.5654, address: '台北市信義區台北101', mode})
+            });
+            const data = await res.json();
+            document.getElementById('output').textContent = JSON.stringify(data, null, 2);
+        }
+    </script>
+</body>
+</html>
