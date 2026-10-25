@@ -242,6 +242,80 @@ function handleIncomingPostback(data, replyToken, userId) {
     sendSplitBillGuide(replyToken);
     return;
   }
+
+  // 7. 跨 Bot 聯動：查詢餐飲信用卡刷卡優惠
+  if (params.action === "check_food_card") {
+    const foodName = params.name || "外食餐飲";
+    sendFoodCardReward(replyToken, foodName);
+    return;
+  }
+
+  // 8. 跨 Bot 聯動：預備聚餐 AA 分帳
+  if (params.action === "split_food") {
+    const foodName = params.name || "美食聚餐";
+    replyTextMessage(
+      replyToken,
+      `💸【聚餐 AA 分帳計算機】\n\n您正在結算【${foodName}】！\n請直接回覆：\n👉 分帳 [總金額] [人數] [服務費%]\n\n📌 範例：\n• 分帳 1200 4人 10%\n• 分帳 800 2人\n\n系統將自動換算每人應付並產出一鍵 LINE Pay 轉帳卡片！`
+    );
+    return;
+  }
+}
+
+function sendFoodCardReward(replyToken, foodName) {
+  const isCvs = /7-11|全家|超商|萊爾富|ok超商/i.test(foodName);
+  const firstCard = isCvs
+    ? { name: "台新 玫瑰/太陽卡", plan: "天天刷 (3.8%)", tip: "超商/全聯天天刷 3.8% 高回饋" }
+    : { name: "國泰世華 CUBE 卡", plan: "樂饗購 (3.0%)", tip: "餐飲美食、咖啡廳享 3% 回饋無上限" };
+
+  const flex = {
+    type: "bubble",
+    size: "mega",
+    header: {
+      type: "box", layout: "vertical", backgroundColor: "#1E3A8A", paddingAll: "20px",
+      contents: [
+        { type: "text", text: "💳 外出美食最優刷卡建議", weight: "bold", color: "#FFFFFF", size: "sm" },
+        { type: "text", text: foodName, weight: "bold", size: "xl", color: "#FDE68A", margin: "sm" }
+      ]
+    },
+    body: {
+      type: "box", layout: "vertical", spacing: "md", paddingAll: "20px",
+      contents: [
+        {
+          type: "box", layout: "vertical", backgroundColor: "#EFF6FF", paddingAll: "12px", cornerRadius: "8px",
+          contents: [
+            { type: "text", text: `🥇 首選神卡：${firstCard.name}`, weight: "bold", color: "#1D4ED8", size: "sm" },
+            { type: "text", text: `• 方案回饋：【${firstCard.plan}】`, size: "xs", color: "#333333", margin: "xs" },
+            { type: "text", text: `• 適用說明：${firstCard.tip}`, size: "xs", color: "#4B5563", margin: "xs" }
+          ]
+        },
+        {
+          type: "box", layout: "horizontal",
+          contents: [
+            { type: "text", text: "🥈 玉山 UBear 卡 (LINE Pay / 街口 3%)", size: "xs", color: "#444444", flex: 3 },
+            { type: "text", text: "行動支付最優", size: "xs", color: "#059669", align: "end", flex: 2, weight: "bold" }
+          ]
+        },
+        {
+          type: "box", layout: "horizontal",
+          contents: [
+            { type: "text", text: "🥉 聯邦 賴點卡 (LINE Pay 2% 點數回饋)", size: "xs", color: "#444444", flex: 3 },
+            { type: "text", text: "次選備案", size: "xs", color: "#888888", align: "end", flex: 2 }
+          ]
+        }
+      ]
+    },
+    footer: {
+      type: "box", layout: "vertical", spacing: "sm", paddingAll: "15px",
+      contents: [
+        {
+          type: "button", style: "primary", color: "#1E3A8A", height: "sm",
+          action: { type: "message", label: "💬 試算自訂消費金額", text: `${foodName} 350` }
+        }
+      ]
+    }
+  };
+
+  replyFlexMessage(replyToken, `【${foodName}】最優刷卡建議：${firstCard.name}`, flex);
 }
 
 // ==========================================
@@ -287,11 +361,12 @@ function drawFoodSmartly(replyToken, userId) {
         { type: "text", text: `🔥 預估熱量：約 ${selected.calories} kcal`, size: "md", weight: "bold", color: "#D32F2F" },
         { type: "text", text: `💪 蛋白質：${selected.protein}g | 碳水：${selected.carbs}g | 脂肪：${selected.fat}g`, size: "xs", color: "#555555" },
         { type: "text", text: `💡 今日剩餘額度：${remainingCal} kcal (${selected.category || "外食推薦"})`, size: "xs", color: "#1976D2" },
-        { type: "text", text: `📝 美食特色：${selected.description || "道地風味，營養飽足！"}`, size: "xs", color: "#666666", wrap: true, margin: "xs" }
+        { type: "text", text: `📝 美食特色：${selected.description || "道地風味，營養飽足！"}`, size: "xs", color: "#666666", wrap: true, margin: "xs" },
+        { type: "text", text: "💳 刷卡建議：國泰 CUBE 樂饗購 3% / 玉山 UBear 3%", size: "xxs", color: "#1D4ED8", weight: "bold", margin: "xs" }
       ]
     },
     footer: {
-      type: "box", layout: "vertical", spacing: "sm",
+      type: "box", layout: "vertical", spacing: "xs",
       contents: [
         {
           type: "button", style: "primary", color: "#00C300", height: "sm",
@@ -308,6 +383,25 @@ function drawFoodSmartly(replyToken, userId) {
             label: "🧭 1-Click 在 Google 地圖搜尋此料理",
             uri: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(selected.search_keyword || selected.name)}`
           }
+        },
+        {
+          type: "box", layout: "horizontal", spacing: "xs",
+          contents: [
+            {
+              type: "button", style: "link", height: "sm",
+              action: {
+                type: "postback", label: "💳 查刷卡回饋",
+                data: `action=check_food_card&name=${encodeURIComponent(selected.name)}`
+              }
+            },
+            {
+              type: "button", style: "link", height: "sm",
+              action: {
+                type: "postback", label: "💸 聚餐 AA 分帳",
+                data: `action=split_food&name=${encodeURIComponent(selected.name)}`
+              }
+            }
+          ]
         },
         {
           type: "button", style: "link", height: "sm",
