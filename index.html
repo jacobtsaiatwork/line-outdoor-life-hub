@@ -34,6 +34,10 @@
         <label class="form-label fw-bold">LINE Channel Access Token</label>
         <input type="text" id="lineToken" class="form-control" placeholder="貼上您的 LINE Token">
       </div>
+      <div class="mb-3">
+        <label class="form-label fw-bold">Google Maps API Key (選填，啟用 Google Places 官方星等與照片)</label>
+        <input type="text" id="googleMapsKey" class="form-control" placeholder="貼上您的 Google Maps Key (如 AIzaSy...)">
+      </div>
       <button class="btn btn-success w-100" onclick="saveConfig()">💾 儲存金鑰至 Google 雲端</button>
       <div id="saveMsg" class="mt-2 text-center text-success fw-bold"></div>
     </div>
@@ -51,13 +55,14 @@
 
     function saveConfig() {
       const token = document.getElementById('lineToken').value.trim();
+      const mapsKey = document.getElementById('googleMapsKey').value.trim();
       document.getElementById('saveMsg').innerText = "⏳ 儲存中...";
       if (typeof google !== 'undefined' && google.script && google.script.run) {
         google.script.run.withSuccessHandler(function(res) {
           document.getElementById('saveMsg').innerText = res;
         }).withFailureHandler(function(err) {
           document.getElementById('saveMsg').innerText = "儲存失敗：" + err;
-        }).saveConfigServer(token, "");
+        }).saveConfigServer(token, "", mapsKey);
       } else {
         document.getElementById('saveMsg').innerText = "✅ 設定已儲存至 Google 雲端！";
       }

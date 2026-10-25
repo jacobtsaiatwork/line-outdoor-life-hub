@@ -6,6 +6,7 @@
 
 const CONFIG = {
   DEFAULT_GEMINI_KEY: "",
+  DEFAULT_MAPS_KEY: "",
   LINE_MESSAGING_API: "https://api.line.me/v2/bot/message/reply",
   LINE_CONTENT_API: "https://api-data.line.me/v2/bot/message"
 };
@@ -24,6 +25,10 @@ function getLineToken() {
 
 function getGeminiKey() {
   return getProperty("GEMINI_API_KEY", CONFIG.DEFAULT_GEMINI_KEY);
+}
+
+function getGoogleMapsKey() {
+  return getProperty("GOOGLE_MAPS_API_KEY", CONFIG.DEFAULT_MAPS_KEY);
 }
 
 // ==========================================
@@ -291,22 +296,37 @@ function getDynamicFallbackFood(remainingCal) {
 }
 
 // ==========================================
-// 3. 連動閉環 2：AI 周邊真實餐廳導航 (Google Maps 結合)
+// 3. 連動閉環 2：Google Places API 官方周邊餐廳導航 (容錯備援)
 // ==========================================
 function sendNearbyRestaurants(replyToken, lat, lng, address) {
   const consumed = getTodayCalories();
   const remainingCal = Math.max(0, 2000 - consumed);
+  const mapsKey = getGoogleMapsKey();
 
-  // 1. 優先使用 Gemini AI 針對真實地理座標與街廓推薦周邊餐廳
-  let aiRes = fetchNearbyRestaurantsWithAI(lat, lng, address, remainingCal);
   let spots = [];
   let districtName = "";
+  let isGoogleOfficial = false;
 
-  if (aiRes && aiRes.restaurants && aiRes.restaurants.length > 0) {
-    spots = aiRes.restaurants;
-    districtName = aiRes.district || "";
-  } else {
-    // 2. 若 AI 暫時不可用，即時調用 OpenStreetMap 查詢真實周邊餐廳據點
+  // 1. 首選：若已設定 GOOGLE_MAPS_API_KEY，調用 Google Places API (New) 實時撈取官方店家與星等
+  if (mapsKey) {
+    const places = fetchNearbyRestaurantsGooglePlaces(lat, lng, address, mapsKey);
+    if (places && places.length > 0) {
+      spots = places;
+      isGoogleOfficial = true;
+    }
+  }
+
+  // 2. 備援 1：調用 Gemini AI 根據真實街廓座標動態分析周邊名店
+  if (spots.length === 0) {
+    const aiRes = fetchNearbyRestaurantsWithAI(lat, lng, address, remainingCal);
+    if (aiRes && aiRes.restaurants && aiRes.restaurants.length > 0) {
+      spots = aiRes.restaurants;
+      districtName = aiRes.district || "";
+    }
+  }
+
+  // 3. 備援 2：調用 OpenStreetMap 即時地理資訊節點
+  if (spots.length === 0) {
     spots = fetchNearbyRestaurantsOSM(lat, lng);
   }
 
@@ -340,12 +360,14 @@ function sendNearbyRestaurants(replyToken, lat, lng, address) {
     };
   });
 
+  const headerTitle = isGoogleOfficial ? "🍽️ Google Places 官方認證周邊餐廳" : "🍽️ Google Maps 周邊真實餐廳推薦";
+
   const flex = {
     type: "bubble",
     header: {
       type: "box", layout: "vertical", backgroundColor: "#EA580C",
       contents: [
-        { type: "text", text: "🍽️ Google Maps 周邊真實餐廳推薦", color: "#FFFFFF", weight: "bold", size: "lg" },
+        { type: "text", text: headerTitle, color: "#FFFFFF", weight: "bold", size: "lg" },
         { type: "text", text: `定位地點：${districtName ? `【${districtName}】` : ""}${address.substring(0, 24)}`, color: "#FFEDD5", size: "xs", wrap: true }
       ]
     },
@@ -374,6 +396,72 @@ function sendNearbyRestaurants(replyToken, lat, lng, address) {
   };
 
   replyFlexMessage(replyToken, "🍽️ 周邊人氣餐廳推薦", flex);
+}
+
+function fetchNearbyRestaurantsGooglePlaces(lat, lng, address, apiKey) {
+  try {
+    // 呼叫 Google Places API (New) - 移植自「不要什麼都隨便」
+    const url = "https://places.googleapis.com/v1/places:searchNearby";
+    const headers = {
+      "Content-Type": "application/json",
+      "X-Goog-Api-Key": apiKey,
+      "X-Goog-FieldMask": "places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.location,places.primaryTypeDisplayName,places.priceLevel,places.currentOpeningHours"
+    };
+    const foodTypes = [
+      "restaurant", "taiwanese_restaurant", "chinese_restaurant", "noodle_shop", "diner",
+      "fast_food_restaurant", "cafe", "meal_takeaway", "hot_pot_restaurant", "japanese_restaurant"
+    ];
+    const payload = {
+      "includedTypes": foodTypes,
+      "maxResultCount": 5,
+      "languageCode": "zh-TW",
+      "locationRestriction": {
+        "circle": {
+          "center": { "latitude": lat, "longitude": lng },
+          "radius": 1500.0
+        }
+      }
+    };
+    const res = UrlFetchApp.fetch(url, {
+      method: "post",
+      contentType: "application/json",
+      headers: headers,
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    });
+    if (res.getResponseCode() === 200) {
+      const data = JSON.parse(res.getContentText());
+      const places = data.places || [];
+      if (places.length > 0) {
+        return places.map(p => {
+          const name = p.displayName ? p.displayName.text : "在地餐廳";
+          const rating = p.rating ? p.rating.toFixed(1) : "4.5";
+          const reviews = p.userRatingCount || 0;
+          const pLat = p.location ? p.location.latitude : lat;
+          const pLng = p.location ? p.location.longitude : lng;
+          const dist = calculateDistanceMeters(lat, lng, pLat, pLng);
+          const walkMin = Math.max(1, Math.round(dist / 80));
+          const addr = p.formattedAddress || address;
+          let openStatus = "🟢 現正營業中";
+          if (p.currentOpeningHours && p.currentOpeningHours.openNow === false) {
+            openStatus = "🕒 休息中";
+          }
+          const tag = p.primaryTypeDisplayName ? p.primaryTypeDisplayName.text : "人氣名店";
+          return {
+            name: name,
+            dist_str: `步行約 ${walkMin} 分鐘 (${dist}m)`,
+            cal_str: "實體餐廳",
+            tag: tag,
+            specialty: `⭐ ${rating} (${reviews} 則評論) | ${openStatus}`,
+            maps_keyword: `${name} ${addr}`
+          };
+        });
+      }
+    }
+  } catch (e) {
+    console.warn("Google Places API (New) fetch error: " + e);
+  }
+  return null;
 }
 
 function fetchNearbyRestaurantsWithAI(lat, lng, address, remainingCal) {
@@ -449,11 +537,26 @@ function fetchNearbyRestaurantsOSM(lat, lng) {
 }
 
 // ==========================================
-// 4. 連動閉環 3：即時地理圖資友善洗手間 (OSM + Google Maps 導航)
+// 4. 連動閉環 3：即時地理圖資友善洗手間 (Google Places + OSM + Maps 導航)
 // ==========================================
 function sendNearbyToilets(replyToken, lat, lng, address) {
-  // 即時向 OpenStreetMap 查詢真實 7-11、全家超商、速食店與公廁
-  let spots = fetchRealNearbyToiletsOSM(lat, lng);
+  const mapsKey = getGoogleMapsKey();
+  let spots = [];
+  let isGoogleOfficial = false;
+
+  // 1. 首選：若已設定 GOOGLE_MAPS_API_KEY，調用 Google Places 查詢周遭官方超商、加油站與捷運
+  if (mapsKey) {
+    const places = fetchNearbyToiletsGooglePlaces(lat, lng, address, mapsKey);
+    if (places && places.length > 0) {
+      spots = places;
+      isGoogleOfficial = true;
+    }
+  }
+
+  // 2. 備援：即時向 OpenStreetMap 查詢真實 7-11、全家超商、速食店與公廁
+  if (spots.length === 0) {
+    spots = fetchRealNearbyToiletsOSM(lat, lng);
+  }
 
   const spotBoxes = spots.map(s => {
     const navUri = `https://www.google.com/maps/dir/?api=1&origin=${lat},${lng}&destination=${encodeURIComponent(s.name + " " + s.address)}&travelmode=walking`;
@@ -473,7 +576,7 @@ function sendNearbyToilets(replyToken, lat, lng, address) {
     header: {
       type: "box", layout: "vertical", backgroundColor: "#558B2F",
       contents: [
-        { type: "text", text: "🚻 即時圖資：周邊救急友善洗手間", color: "#FFFFFF", weight: "bold", size: "lg" },
+        { type: "text", text: isGoogleOfficial ? "🚻 Google Places 官方友善洗手間" : "🚻 即時圖資：周邊救急友善洗手間", color: "#FFFFFF", weight: "bold", size: "lg" },
         { type: "text", text: `目前位置：${address.substring(0, 24)}`, color: "#DCEDC8", size: "xs", wrap: true }
       ]
     },
@@ -498,6 +601,62 @@ function sendNearbyToilets(replyToken, lat, lng, address) {
   };
 
   replyFlexMessage(replyToken, "🚻 周邊友善洗手間導航", flex);
+}
+
+function fetchNearbyToiletsGooglePlaces(lat, lng, address, apiKey) {
+  try {
+    const url = "https://places.googleapis.com/v1/places:searchNearby";
+    const headers = {
+      "Content-Type": "application/json",
+      "X-Goog-Api-Key": apiKey,
+      "X-Goog-FieldMask": "places.displayName,places.formattedAddress,places.location,places.primaryTypeDisplayName"
+    };
+    const payload = {
+      "includedTypes": ["convenience_store", "gas_station", "subway_station", "fast_food_restaurant"],
+      "maxResultCount": 5,
+      "languageCode": "zh-TW",
+      "locationRestriction": {
+        "circle": {
+          "center": { "latitude": lat, "longitude": lng },
+          "radius": 1500.0
+        }
+      }
+    };
+    const res = UrlFetchApp.fetch(url, {
+      method: "post",
+      contentType: "application/json",
+      headers: headers,
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    });
+    if (res.getResponseCode() === 200) {
+      const data = JSON.parse(res.getContentText());
+      const places = data.places || [];
+      if (places.length > 0) {
+        return places.map(p => {
+          const name = p.displayName ? p.displayName.text : "友善據點";
+          const pLat = p.location ? p.location.latitude : lat;
+          const pLng = p.location ? p.location.longitude : lng;
+          const dist = calculateDistanceMeters(lat, lng, pLat, pLng);
+          const walkMin = Math.max(1, Math.round(dist / 80));
+          const addr = p.formattedAddress || address;
+          let badge = "🕒 24H 友善出借";
+          if (name.includes("中油") || name.includes("加油站")) badge = "⛽ 直營加油站 | 🕒 24H";
+          if (name.includes("捷運") || name.includes("站")) badge = "🚇 捷運公共設施 | ♿ 無障礙";
+          return {
+            name: name,
+            address: addr,
+            dist: dist,
+            dist_str: `步行約 ${walkMin} 分鐘 (${dist}m)`,
+            badges: badge
+          };
+        });
+      }
+    }
+  } catch (e) {
+    console.warn("Google Places Toilet fetch error: " + e);
+  }
+  return null;
 }
 
 function fetchRealNearbyToiletsOSM(lat, lng) {
@@ -793,15 +952,18 @@ function parseQueryString(query) {
 // ==========================================
 // 7. 雲端 Web 管理面板 (doGet)
 // ==========================================
-function saveConfigServer(token, key) {
+function saveConfigServer(token, geminiKey, mapsKey) {
   if (token) setProperty("LINE_CHANNEL_ACCESS_TOKEN", token);
-  if (key) setProperty("GEMINI_API_KEY", key);
+  if (geminiKey) setProperty("GEMINI_API_KEY", geminiKey);
+  if (mapsKey) setProperty("GOOGLE_MAPS_API_KEY", mapsKey);
   return "✅ 設定已成功儲存至 Google 雲端！";
 }
 
 function doGet(e) {
   if (e && e.parameter && e.parameter.action === "saveConfig") {
     if (e.parameter.lineToken) setProperty("LINE_CHANNEL_ACCESS_TOKEN", e.parameter.lineToken);
+    if (e.parameter.geminiKey) setProperty("GEMINI_API_KEY", e.parameter.geminiKey);
+    if (e.parameter.googleMapsKey) setProperty("GOOGLE_MAPS_API_KEY", e.parameter.googleMapsKey);
     return ContentService.createTextOutput("✅ 設定已儲存至 Google 雲端！");
   }
 
