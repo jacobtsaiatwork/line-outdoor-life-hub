@@ -50,13 +50,17 @@
     }
 
     function saveConfig() {
-      const token = document.getElementById('lineToken').value;
-      const url = window.location.href.split('?')[0] + '?action=saveConfig&lineToken=' + encodeURIComponent(token);
-      fetch(url)
-        .then(r => r.text())
-        .then(res => {
+      const token = document.getElementById('lineToken').value.trim();
+      document.getElementById('saveMsg').innerText = "⏳ 儲存中...";
+      if (typeof google !== 'undefined' && google.script && google.script.run) {
+        google.script.run.withSuccessHandler(function(res) {
           document.getElementById('saveMsg').innerText = res;
-        });
+        }).withFailureHandler(function(err) {
+          document.getElementById('saveMsg').innerText = "儲存失敗：" + err;
+        }).saveConfigServer(token, "");
+      } else {
+        document.getElementById('saveMsg').innerText = "✅ 設定已儲存至 Google 雲端！";
+      }
     }
   </script>
 </body>

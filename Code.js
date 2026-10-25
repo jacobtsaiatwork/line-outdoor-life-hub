@@ -347,6 +347,12 @@ function parseQueryString(query) {
 // ==========================================
 // 6. 雲端 Web 管理面板 (doGet)
 // ==========================================
+function saveConfigServer(token, key) {
+  if (token) setProperty("LINE_CHANNEL_ACCESS_TOKEN", token);
+  if (key) setProperty("GEMINI_API_KEY", key);
+  return "✅ 設定已成功儲存至 Google 雲端！";
+}
+
 function doGet(e) {
   if (e && e.parameter && e.parameter.action === "saveConfig") {
     if (e.parameter.lineToken) setProperty("LINE_CHANNEL_ACCESS_TOKEN", e.parameter.lineToken);
