@@ -220,21 +220,21 @@ def build_all_rich_menu_payloads() -> Dict[str, Dict[str, Any]]:
             "size": {"width": 2500, "height": 1686},
             "selected": True,
             "name": "outdoor_hub_tab_food_v1",
-            "chatBarText": "🧭 外出三合一：美食×熱量×廁所",
+            "chatBarText": "🧭 外出生活選單",
             "areas": food_areas
         },
         ALIAS_CALORIE: {
             "size": {"width": 2500, "height": 1686},
             "selected": True,
             "name": "outdoor_hub_tab_calorie_v1",
-            "chatBarText": "🧭 外出三合一：美食×熱量×廁所",
+            "chatBarText": "🧭 外出生活選單",
             "areas": calorie_areas
         },
         ALIAS_TOILET: {
             "size": {"width": 2500, "height": 1686},
             "selected": True,
             "name": "outdoor_hub_tab_toilet_v1",
-            "chatBarText": "🧭 外出三合一：美食×熱量×廁所",
+            "chatBarText": "🧭 外出生活選單",
             "areas": toilet_areas
         }
     }

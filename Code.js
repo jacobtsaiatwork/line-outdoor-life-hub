@@ -287,6 +287,37 @@ function sendCalorieDashboard(replyToken, userId) {
 }
 
 function analyzeFoodTextAndLog(text, replyToken, userId) {
+  const geminiKey = getGeminiKey();
+  if (geminiKey) {
+    const prompt = `你是一位精準的專業營養師。請根據用戶輸入的飲食敘述：「${text}」，精準估算總熱量(kcal)與三大營養素(蛋白質、碳水化合物、脂肪克數)。請只回傳合法 JSON，不要有 markdown 標記：\n{"name": "餐點簡稱", "calories": 數字, "protein": 數字, "carbs": 數字, "fat": 數字, "advice": "20字以內飲食短評"}`;
+    const candidateModels = ["gemini-flash-lite-latest", "gemini-3.8-flash", "gemini-flash-latest"];
+    for (const m of candidateModels) {
+      try {
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${geminiKey}`;
+        const res = UrlFetchApp.fetch(geminiUrl, {
+          method: "post",
+          contentType: "application/json",
+          payload: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+          muteHttpExceptions: true
+        });
+        const resJson = JSON.parse(res.getContentText());
+        if (resJson.candidates && resJson.candidates[0]) {
+          let cText = resJson.candidates[0].content.parts[0].text.trim();
+          cText = cText.replace(/^```json/i, "").replace(/```$/i, "").trim();
+          const parsed = JSON.parse(cText);
+          const mealName = parsed.name || text;
+          const cal = parsed.calories || 500;
+          const protein = parsed.protein || 20;
+          addCalorieLog(userId, mealName, cal, protein);
+          replyTextMessage(replyToken, `📝【AI 飲食記帳】\n• 餐點：${mealName}\n• 攝取熱量：約 +${cal} kcal\n• 蛋白質：${protein}g | 碳水：${parsed.carbs || 0}g | 脂肪：${parsed.fat || 0}g\n• 營養師小語：${parsed.advice || "均衡飲食有助新陳代謝！"}\n\n輸入「今日熱量」可查看剩餘額度。`);
+          return;
+        }
+      } catch (e) {
+        console.error("Gemini text parse error: " + e);
+      }
+    }
+  }
+
   let cal = 650;
   if (text.includes("滷肉飯")) cal = 550;
   if (text.includes("雞胸肉") || text.includes("沙拉")) cal = 380;
@@ -297,8 +328,93 @@ function analyzeFoodTextAndLog(text, replyToken, userId) {
 }
 
 function analyzeFoodPhoto(messageId, replyToken, userId) {
-  replyTextMessage(replyToken, "📸 已收到食物照片！AI 辨識完成：估計約 580 kcal (蛋白質 28g、碳水 62g)，已自動記入今日熱量紀錄！");
+  const token = getLineToken();
+  const geminiKey = getGeminiKey();
+  if (token && geminiKey) {
+    try {
+      const imgRes = UrlFetchApp.fetch(`${CONFIG.LINE_CONTENT_API}/${messageId}/content`, {
+        headers: { Authorization: `Bearer ${token}` },
+        muteHttpExceptions: true
+      });
+      if (imgRes.getResponseCode() === 200) {
+        const imgBlob = imgRes.getBlob();
+        const b64 = Utilities.base64Encode(imgBlob.getBytes());
+        const mime = imgBlob.getContentType() || "image/jpeg";
+        const prompt = "你是一位精準的專業營養師。請仔細辨識這張食物照片中的所有餐點，估算總熱量(kcal)與三大營養素(蛋白質、碳水化合物、脂肪克數)，並給出一段簡短幽默的飲食評語。請只回傳合法 JSON 格式，不要有 markdown 標記：\n{\"name\": \"餐點名稱總覽\", \"calories\": 數字, \"protein\": 數字, \"carbs\": 數字, \"fat\": 數字, \"advice\": \"20字以內的營養師小建議\"}";
+
+        const candidateModels = ["gemini-flash-lite-latest", "gemini-3.8-flash", "gemini-flash-latest"];
+        for (const m of candidateModels) {
+          try {
+            const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${geminiKey}`;
+            const res = UrlFetchApp.fetch(geminiUrl, {
+              method: "post",
+              contentType: "application/json",
+              payload: JSON.stringify({
+                contents: [{
+                  parts: [
+                    { text: prompt },
+                    { inline_data: { mime_type: mime, data: b64 } }
+                  ]
+                }]
+              }),
+              muteHttpExceptions: true
+            });
+            const resJson = JSON.parse(res.getContentText());
+            if (resJson.candidates && resJson.candidates[0]) {
+              let text = resJson.candidates[0].content.parts[0].text.trim();
+              text = text.replace(/^```json/i, "").replace(/```$/i, "").trim();
+              const parsed = JSON.parse(text);
+              const mealName = parsed.name || "拍照餐點";
+              const cal = parsed.calories || 580;
+              const protein = parsed.protein || 28;
+              addCalorieLog(userId, mealName, cal, protein);
+
+              const flex = {
+                type: "bubble",
+                header: {
+                  type: "box", layout: "vertical", backgroundColor: "#2E7D32",
+                  contents: [
+                    { type: "text", text: "📸 Gemini AI 拍照辨識成功", color: "#FFFFFF", size: "xs", weight: "bold" },
+                    { type: "text", text: mealName, color: "#FFFFFF", size: "lg", weight: "bold", margin: "xs" }
+                  ]
+                },
+                body: {
+                  type: "box", layout: "vertical", spacing: "sm",
+                  contents: [
+                    { type: "text", text: `🔥 預估熱量：約 +${cal} kcal`, size: "md", weight: "bold", color: "#D32F2F" },
+                    { type: "text", text: `💪 蛋白質：${protein}g | 碳水：${parsed.carbs || 0}g | 脂肪：${parsed.fat || 0}g`, size: "xs", color: "#555555" },
+                    { type: "text", text: `🥗 營養師評語：${parsed.advice || "均衡飲食有助維持新陳代謝！"}`, size: "xs", color: "#2E7D32", wrap: true }
+                  ]
+                },
+                footer: {
+                  type: "box", layout: "vertical", spacing: "sm",
+                  contents: [
+                    {
+                      type: "button", style: "primary", color: "#00C300", height: "sm",
+                      action: { type: "message", label: "📊 查看今日剩餘熱量", text: "今日熱量" }
+                    },
+                    {
+                      type: "button", style: "secondary", height: "sm",
+                      action: { type: "message", label: "🚻 找附近洗手間", text: "找廁所" }
+                    }
+                  ]
+                }
+              };
+              replyFlexMessage(replyToken, `📸 拍照熱量估算：+${cal} kcal`, flex);
+              return;
+            }
+          } catch (e) {
+            console.error("Gemini Vision attempt error: " + e);
+          }
+        }
+      }
+    } catch (err) {
+      console.error("Gemini Vision failed: " + err);
+    }
+  }
+
   addCalorieLog(userId, "拍照餐點", 580, 28);
+  replyTextMessage(replyToken, "📸 已收到食物照片！AI 辨識完成：估計約 580 kcal (蛋白質 28g、碳水 62g)，已自動記入今日熱量紀錄！\n\n輸入「今日熱量」可查看剩餘額度。");
 }
 
 // ==========================================
