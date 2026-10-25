@@ -89,7 +89,11 @@ def classify_intent(text: str) -> Tuple[str, Dict[str, Any]]:
         return ("food_draw", {"strict": strict})
 
     # 8. 用記憶定位找附近美食
-    if clean in ["附近美食", "周邊餐廳", "附近餐廳", "找附近美食"]:
+    food_search_triggers = [
+        "附近美食", "周邊餐廳", "附近餐廳", "找附近美食", "找餐廳", "用定位找餐廳",
+        "定位找餐廳", "找美食", "找吃的", "餐廳", "美食", "周邊美食", "餐廳雷達", "美食雷達"
+    ]
+    if clean in food_search_triggers or any(k in clean for k in ["定位找餐廳", "找餐廳", "附近美食", "周邊餐廳"]):
         return ("nearby_food", {})
 
     # 9. 預設歸類為：自然語言飲食熱量估算（例如「一碗滷肉飯加燙青菜」）

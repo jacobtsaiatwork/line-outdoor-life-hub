@@ -19,6 +19,11 @@ function setProperty(key, value) {
   PropertiesService.getScriptProperties().setProperty(key, value);
 }
 
+function setUserMode(userId, mode) {
+  setProperty(`user_mode_${userId}`, mode);
+  setProperty(`user_mode_time_${userId}`, String(Date.now()));
+}
+
 function getLineToken() {
   return getProperty("LINE_CHANNEL_ACCESS_TOKEN", "");
 }
@@ -68,7 +73,12 @@ function handleIncomingMessage(msg, replyToken, userId) {
     setProperty(`user_lng_${userId}`, String(lng));
 
     const mode = getProperty(`user_mode_${userId}`, "food");
-    if (mode === "toilet") {
+    const modeTime = parseInt(getProperty(`user_mode_time_${userId}`, "0"), 10);
+    const now = Date.now();
+    // 若非近期 (30分鐘內) 特別切換至洗手間，預設維持美食餐廳搜尋
+    const effectiveMode = (mode === "toilet" && (now - modeTime < 30 * 60 * 1000)) ? "toilet" : "food";
+
+    if (effectiveMode === "toilet") {
       sendNearbyToilets(replyToken, lat, lng, msg.address || "您的位置");
     } else {
       sendNearbyRestaurants(replyToken, lat, lng, msg.address || "您的位置");
@@ -86,42 +96,86 @@ function handleIncomingMessage(msg, replyToken, userId) {
   if (msg.type === "text") {
     const text = msg.text.trim();
 
-    if (text === "吃什麼" || text === "抽籤" || text === "隨便" || text.includes("美食盲盒") || text.includes("低卡吃什麼") || text.includes("配餐")) {
-      setProperty(`user_mode_${userId}`, "food");
+    // 1. 聚餐 AA 分帳助手 (自「不要什麼都隨便」移植)
+    const splitData = parseSplitBillInput(text);
+    if (splitData) {
+      sendSplitBillCard(replyToken, splitData);
+      return;
+    }
+    if (text === "分帳" || text === "聚餐分帳" || text.toLowerCase() === "aa" || text.toLowerCase() === "aa制" || text === "算錢") {
+      sendSplitBillGuide(replyToken);
+      return;
+    }
+
+    // 2. 喝水代謝打卡 (自「line-calorie-bot」移植)
+    if (text.startsWith("喝水") || text === "補水" || text === "喝水打卡") {
+      const m = text.match(/\d+/);
+      const ml = m ? parseInt(m[0], 10) : 300;
+      addWaterLog(userId, ml, replyToken);
+      return;
+    }
+
+    // 3. 抽美食盲盒
+    if (text === "吃什麼" || text === "抽籤" || text === "隨便" || text.includes("美食盲盒") || text.includes("低卡吃什麼") || text.includes("配餐") || text === "換一個" || text === "再抽一次") {
+      setUserMode(userId, "food");
       drawFoodSmartly(replyToken, userId);
       return;
     }
 
-    if (text === "找餐廳" || text === "附近餐廳" || text === "附近美食" || text === "餐廳" || text === "美食") {
-      setProperty(`user_mode_${userId}`, "food");
+    // 2. 找餐廳 / 定位找餐廳
+    const isFindFood = /找(餐廳|美食|吃的|周邊餐廳)|(附近|周邊|定位)(餐廳|美食|吃的)|餐廳雷達|美食雷達|推薦餐廳/.test(text) ||
+      text === "餐廳" || text === "美食" || text === "找吃的" || text.includes("定位找餐廳") || text.includes("找餐廳");
+
+    if (isFindFood) {
+      setUserMode(userId, "food");
       const lat = parseFloat(getProperty(`user_lat_${userId}`, "0"));
       const lng = parseFloat(getProperty(`user_lng_${userId}`, "0"));
       if (lat !== 0 && lng !== 0) {
         sendNearbyRestaurants(replyToken, lat, lng, "最近記憶位置");
       } else {
-        replyTextMessage(replyToken, "🍽️ 請在 LINE 聊天室點擊左下角「＋」選擇【傳送位置資訊】，系統將立即為您並行搜尋周邊真實餐廳、人氣小吃與 Google 地圖導航！");
+        replyTextMessageWithLocation(
+          replyToken,
+          "🍽️ 請點擊下方【📍 點此傳送定位找餐廳】或點擊左下角「＋」選擇【傳送位置資訊】，系統將立即為您搜尋周邊真實餐廳、人氣小吃與 Google 地圖導航！",
+          "📍 傳送定位找餐廳"
+        );
       }
       return;
     }
 
+    // 3. 熱量儀表板
     if (text === "熱量" || text === "今日熱量" || text === "儀表板") {
       sendCalorieDashboard(replyToken, userId);
       return;
     }
 
-    if (text === "找廁所" || text === "洗手間" || text === "廁所" || text.includes("24H 廁所") || text.includes("公廁")) {
-      setProperty(`user_mode_${userId}`, "toilet");
+    // 4. 找洗手間 (含特殊標籤過濾：無障礙、尿布檯、24H)
+    const isFindToilet = /找(廁所|洗手間|公廁)|(附近|周邊|24h|急用)(廁所|洗手間|化妝室|公廁)|廁所雷達|洗手間雷達|尿急/.test(text) ||
+      text === "廁所" || text === "洗手間" || text === "化妝室" || text === "公廁" || text.includes("找廁所") || text.includes("公廁") ||
+      text.includes("無障礙") || text.includes("尿布") || text.includes("超商廁所");
+
+    if (isFindToilet) {
+      setUserMode(userId, "toilet");
       const lat = parseFloat(getProperty(`user_lat_${userId}`, "0"));
       const lng = parseFloat(getProperty(`user_lng_${userId}`, "0"));
+      let filterType = "all";
+      if (text.includes("無障礙")) filterType = "wheelchair";
+      if (text.includes("尿布") || text.includes("親子")) filterType = "diaper";
+      if (text.includes("24H") || text.includes("24h")) filterType = "24h";
+      if (text.includes("超商")) filterType = "convenience";
+
       if (lat !== 0 && lng !== 0) {
-        sendNearbyToilets(replyToken, lat, lng, "最近記憶位置");
+        sendNearbyToilets(replyToken, lat, lng, "最近記憶位置", filterType);
       } else {
-        replyTextMessage(replyToken, "🚻 請在 LINE 聊天室點擊左下角「＋」選擇【傳送位置資訊】，系統將立即透過即時地理圖資，並行搜尋周邊友善速食店、超商、加油站與捷運公廁！");
+        replyTextMessageWithLocation(
+          replyToken,
+          "🚻 請點擊下方【📍 點此傳送定位找洗手間】或點擊左下角「＋」選擇【傳送位置資訊】，系統將立即透過即時地理圖資，並行搜尋周邊友善速食店、超商、加油站與捷運公廁！",
+          "📍 傳送定位找洗手間"
+        );
       }
       return;
     }
 
-    // 飲食輸入 (如「剛吃了一碗牛肉麵」)
+    // 5. 飲食輸入 (如「剛吃了一碗牛肉麵」)
     if (text.includes("吃") || text.includes("喝") || text.includes("飯") || text.includes("麵") || text.includes("餐")) {
       analyzeFoodTextAndLog(text, replyToken, userId);
       return;
@@ -137,14 +191,14 @@ function handleIncomingPostback(data, replyToken, userId) {
   // 1. 頁籤切換事件 (Rich Menu Alias)
   if (params.action === "switch_tab") {
     if (params.tab) {
-      setProperty(`user_mode_${userId}`, params.tab);
+      setUserMode(userId, params.tab);
     }
     return;
   }
 
   // 2. 抽美食盲盒
   if (params.action === "draw_food") {
-    setProperty(`user_mode_${userId}`, "food");
+    setUserMode(userId, "food");
     drawFoodSmartly(replyToken, userId);
     return;
   }
@@ -167,10 +221,10 @@ function handleIncomingPostback(data, replyToken, userId) {
     const lng = parseFloat(getProperty(`user_lng_${userId}`, "121.53"));
 
     if (target === "food") {
-      setProperty(`user_mode_${userId}`, "food");
+      setUserMode(userId, "food");
       sendNearbyRestaurants(replyToken, lat, lng, "記憶定位據點");
     } else {
-      setProperty(`user_mode_${userId}`, "toilet");
+      setUserMode(userId, "toilet");
       sendNearbyToilets(replyToken, lat, lng, "記憶定位據點");
     }
     return;
@@ -910,6 +964,21 @@ function analyzeFoodPhoto(messageId, replyToken, userId) {
 // ==========================================
 function replyTextMessage(replyToken, text) {
   sendLineReply(replyToken, [{ type: "text", text: text }]);
+}
+
+function replyTextMessageWithLocation(replyToken, text, locationLabel) {
+  const quickReply = {
+    items: [
+      {
+        type: "action",
+        action: {
+          type: "location",
+          label: locationLabel || "📍 傳送我的位置"
+        }
+      }
+    ]
+  };
+  sendLineReply(replyToken, [{ type: "text", text: text, quickReply: quickReply }]);
 }
 
 function replyFlexMessage(replyToken, altText, flex) {
