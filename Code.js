@@ -229,6 +229,19 @@ function handleIncomingPostback(data, replyToken, userId) {
     }
     return;
   }
+
+  // 5. 喝水打卡
+  if (params.action === "drink_water") {
+    const ml = parseInt(params.ml || "300", 10);
+    addWaterLog(userId, ml, replyToken);
+    return;
+  }
+
+  // 6. 聚餐分帳教學
+  if (params.action === "split_bill_guide") {
+    sendSplitBillGuide(replyToken);
+    return;
+  }
 }
 
 // ==========================================
@@ -238,6 +251,21 @@ function drawFoodSmartly(replyToken, userId) {
   const targetCal = 2000;
   const consumedCal = getTodayCalories(userId);
   const remainingCal = Math.max(0, targetCal - consumedCal);
+
+  // 選擇障礙吐槽計數器 (自「不要什麼都隨便」移植)
+  const todayKey = Utilities.formatDate(new Date(), "Asia/Taipei", "yyyyMMdd");
+  const rerollKey = `reroll_${userId || "default"}_${todayKey}`;
+  const rerollCount = parseInt(getProperty(rerollKey, "0")) + 1;
+  setProperty(rerollKey, String(rerollCount));
+
+  let roastTip = "";
+  if (rerollCount === 3) {
+    roastTip = "👀 你已經抽第 3 次囉！選擇困難症又發作了嗎？這道真的不錯，快去吃吧！🤤";
+  } else if (rerollCount === 4) {
+    roastTip = "🤔 抽第 4 次了！挑剔鬼，再挑下去餐廳都要打烊囉！⏰";
+  } else if (rerollCount >= 5) {
+    roastTip = "🚨 選擇障礙大末期警報！🚨\n本大廚直接替你決定，今天就吃這道！不准再按重抽了，肚子餓對胃不好，快出發導航！😤🏃";
+  }
 
   // 優先呼叫 Gemini AI 依剩餘熱量動態生成真實外食料理
   const aiFood = drawFoodWithAI(remainingCal, consumedCal);
@@ -289,7 +317,12 @@ function drawFoodSmartly(replyToken, userId) {
     }
   };
 
-  replyFlexMessage(replyToken, `🍽️ AI 為您推薦：${selected.name}`, flex);
+  const messages = [];
+  if (roastTip) {
+    messages.push({ type: "text", text: roastTip });
+  }
+  messages.push({ type: "flex", altText: `🍽️ AI 為您推薦：${selected.name}`, contents: flex });
+  sendLineReply(replyToken, messages);
 }
 
 function drawFoodWithAI(remainingCal, consumedCal) {
@@ -593,14 +626,15 @@ function fetchNearbyRestaurantsOSM(lat, lng) {
 // ==========================================
 // 4. 連動閉環 3：即時地理圖資友善洗手間 (Google Places + OSM + Maps 導航)
 // ==========================================
-function sendNearbyToilets(replyToken, lat, lng, address) {
+function sendNearbyToilets(replyToken, lat, lng, address, filterType) {
+  const fType = filterType || "all";
   const mapsKey = getGoogleMapsKey();
   let spots = [];
   let isGoogleOfficial = false;
 
   // 1. 首選：若已設定 GOOGLE_MAPS_API_KEY，調用 Google Places 查詢周遭官方超商、加油站與捷運
   if (mapsKey) {
-    const places = fetchNearbyToiletsGooglePlaces(lat, lng, address, mapsKey);
+    const places = fetchNearbyToiletsGooglePlaces(lat, lng, address, mapsKey, fType);
     if (places && places.length > 0) {
       spots = places;
       isGoogleOfficial = true;
@@ -609,7 +643,7 @@ function sendNearbyToilets(replyToken, lat, lng, address) {
 
   // 2. 備援：即時向 OpenStreetMap 查詢真實 7-11、全家超商、速食店與公廁
   if (spots.length === 0) {
-    spots = fetchRealNearbyToiletsOSM(lat, lng);
+    spots = fetchRealNearbyToiletsOSM(lat, lng, fType);
   }
 
   const spotBoxes = spots.map(s => {
@@ -625,12 +659,18 @@ function sendNearbyToilets(replyToken, lat, lng, address) {
     };
   });
 
+  let filterTitle = "";
+  if (fType === "wheelchair") filterTitle = "【♿ 無障礙快篩】";
+  if (fType === "diaper") filterTitle = "【🍼 尿布檯/育嬰快篩】";
+  if (fType === "24h") filterTitle = "【🕒 24H 友善快篩】";
+  if (fType === "convenience") filterTitle = "【🏪 便利超商快篩】";
+
   const flex = {
     type: "bubble",
     header: {
       type: "box", layout: "vertical", backgroundColor: "#558B2F",
       contents: [
-        { type: "text", text: isGoogleOfficial ? "🚻 Google Places 官方友善洗手間" : "🚻 即時圖資：周邊救急友善洗手間", color: "#FFFFFF", weight: "bold", size: "lg" },
+        { type: "text", text: isGoogleOfficial ? `🚻 Google Places 友善洗手間 ${filterTitle}` : `🚻 即時圖資：救急洗手間 ${filterTitle}`, color: "#FFFFFF", weight: "bold", size: "lg" },
         { type: "text", text: `目前位置：${address.substring(0, 24)}`, color: "#DCEDC8", size: "xs", wrap: true }
       ]
     },
@@ -654,10 +694,19 @@ function sendNearbyToilets(replyToken, lat, lng, address) {
     }
   };
 
-  replyFlexMessage(replyToken, "🚻 周邊友善洗手間導航", flex);
+  const toiletQuickReply = {
+    items: [
+      { type: "action", action: { type: "message", label: "♿ 找無障礙公廁", text: "找無障礙公廁" } },
+      { type: "action", action: { type: "message", label: "🍼 找尿布檯育嬰室", text: "找尿布檯" } },
+      { type: "action", action: { type: "message", label: "🕒 找 24H 廁所", text: "找 24H 廁所" } },
+      { type: "action", action: { type: "message", label: "🏪 找超商廁所", text: "找超商廁所" } }
+    ]
+  };
+
+  replyFlexMessage(replyToken, "🚻 周邊友善洗手間導航", flex, toiletQuickReply);
 }
 
-function fetchNearbyToiletsGooglePlaces(lat, lng, address, apiKey) {
+function fetchNearbyToiletsGooglePlaces(lat, lng, address, apiKey, filterType) {
   try {
     const url = "https://places.googleapis.com/v1/places:searchNearby";
     const headers = {
@@ -665,8 +714,15 @@ function fetchNearbyToiletsGooglePlaces(lat, lng, address, apiKey) {
       "X-Goog-Api-Key": apiKey,
       "X-Goog-FieldMask": "places.displayName,places.formattedAddress,places.location,places.primaryTypeDisplayName"
     };
+
+    let includedTypes = ["convenience_store", "gas_station", "subway_station", "fast_food_restaurant"];
+    if (filterType === "wheelchair") includedTypes = ["subway_station", "library", "hospital"];
+    if (filterType === "diaper") includedTypes = ["subway_station", "shopping_mall", "hospital"];
+    if (filterType === "24h") includedTypes = ["convenience_store", "gas_station"];
+    if (filterType === "convenience") includedTypes = ["convenience_store"];
+
     const payload = {
-      "includedTypes": ["convenience_store", "gas_station", "subway_station", "fast_food_restaurant"],
+      "includedTypes": includedTypes,
       "maxResultCount": 5,
       "languageCode": "zh-TW",
       "locationRestriction": {
@@ -697,6 +753,8 @@ function fetchNearbyToiletsGooglePlaces(lat, lng, address, apiKey) {
           let badge = "🕒 24H 友善出借";
           if (name.includes("中油") || name.includes("加油站")) badge = "⛽ 直營加油站 | 🕒 24H";
           if (name.includes("捷運") || name.includes("站")) badge = "🚇 捷運公共設施 | ♿ 無障礙";
+          if (filterType === "wheelchair") badge = "♿ 設有無障礙設施";
+          if (filterType === "diaper") badge = "🍼 設有尿布檯/育嬰室";
           return {
             name: name,
             address: addr,
@@ -981,8 +1039,10 @@ function replyTextMessageWithLocation(replyToken, text, locationLabel) {
   sendLineReply(replyToken, [{ type: "text", text: text, quickReply: quickReply }]);
 }
 
-function replyFlexMessage(replyToken, altText, flex) {
-  sendLineReply(replyToken, [{ type: "flex", altText: altText, contents: flex }]);
+function replyFlexMessage(replyToken, altText, flex, quickReply) {
+  const msg = { type: "flex", altText: altText, contents: flex };
+  if (quickReply) msg.quickReply = quickReply;
+  sendLineReply(replyToken, [msg]);
 }
 
 function sendLineReply(replyToken, messages) {
@@ -1000,9 +1060,11 @@ function sendLineReply(replyToken, messages) {
 function sendHelpMenu(replyToken) {
   const msg =
     `🧭【外出生活三合一超級小幫手】\n\n` +
-    `• 🍽️ 輸入「吃什麼」：Gemini AI 依今日剩餘額度動態挑選美食料理\n` +
-    `• 📍 傳送位置資訊：即時搜尋周邊真實餐廳、人氣小吃與 1-Click Google 地圖導航\n` +
-    `• 🚻 點擊洗手間或輸入「找廁所」：即時地理圖資搜尋 24H 超商、加油站與捷運公廁\n` +
+    `• 🍽️ 輸入「吃什麼」：Gemini AI 依今日剩餘額度動態挑選美食料理（重複挑選觸發毒舌模式）\n` +
+    `• 📍 傳送位置資訊：即時搜尋周邊真實餐廳、人氣名店與 1-Click Google 導航\n` +
+    `• 🚻 輸入「找廁所」或點選快篩：即時搜尋無障礙、尿布台、24H與超商公廁\n` +
+    `• 💸 輸入「分帳 2400 4人 10%」：聚餐 AA 制計算機，產出一鍵 LINE Pay 與分帳卡片\n` +
+    `• 💧 輸入「喝水 300」或「今日喝水」：打卡記錄每日 2000ml 代謝飲水進度\n` +
     `• 📸 傳送食物照片：Gemini Vision 拍照秒算熱量與三大營養素\n` +
     `• 🔥 輸入「今日熱量」：查看每日目標與剩餘進度條`;
   replyTextMessage(replyToken, msg);
@@ -1039,4 +1101,297 @@ function doGet(e) {
   return HtmlService.createHtmlOutputFromFile("index")
     .setTitle("外出生活三合一 - 雲端中控台")
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+// ==========================================
+// 8. 聚餐 AA 制 / LINE Pay 一鍵分帳助手
+// ==========================================
+function parseSplitBillInput(text) {
+  const clean = text.replace(/^(分帳|aa|AA|拆帳|算錢)\s*/i, "").trim();
+  const parts = clean.split(/\s+/);
+  if (parts.length < 2) return null;
+
+  const total = parseFloat(parts[0]);
+  const people = parseInt(parts[1].replace(/[^0-9]/g, ""));
+  if (isNaN(total) || isNaN(people) || people <= 0) return null;
+
+  let tipPercent = 0;
+  if (parts.length >= 3) {
+    const tipStr = parts[2].replace(/[^0-9.]/g, "");
+    if (tipStr) tipPercent = parseFloat(tipStr);
+  }
+
+  const tipAmount = Math.round(total * (tipPercent / 100));
+  const finalTotal = Math.round(total + tipAmount);
+  const perPerson = Math.ceil(finalTotal / people);
+  const remainder = (perPerson * people) - finalTotal;
+
+  return {
+    original_total: total,
+    headcount: people,
+    tip_percent: tipPercent,
+    tip_amount: tipAmount,
+    final_total: finalTotal,
+    per_person: perPerson,
+    remainder: remainder
+  };
+}
+
+function sendSplitBillGuide(replyToken) {
+  const guide =
+    `💳【AA 聚餐分帳計算機使用指南】\n\n` +
+    `請依照以下格式輸入：\n` +
+    `👉 分帳 [總金額] [人數] [服務費%]\n\n` +
+    `📌 範例：\n` +
+    `• 分帳 2400 4人 10%\n` +
+    `• 分帳 1200 3人\n` +
+    `• AA 3600 6人 5%\n\n` +
+    `✨ 系統將自動計算人均、服務費，並生成包含「一鍵轉帳 LINE Pay」與「群組轉發」的精美卡片！`;
+  replyTextMessage(replyToken, guide);
+}
+
+function sendSplitBillCard(replyToken, data) {
+  const shareText = encodeURIComponent(
+    `📢 聚餐結帳囉！\n` +
+    `💰 總計：$${data.final_total} (${data.headcount}人)\n` +
+    `👉 每人應付：$${data.per_person}\n` +
+    `點此開啟 LINE Pay 轉帳：line://pay`
+  );
+  const forwardUrl = `https://line.me/R/msg/text/?${shareText}`;
+
+  const flex = {
+    type: "bubble",
+    size: "mega",
+    header: {
+      type: "box",
+      layout: "vertical",
+      backgroundColor: "#1DB446",
+      paddingAll: "20px",
+      contents: [
+        {
+          type: "box",
+          layout: "horizontal",
+          contents: [
+            { type: "text", text: "💸 聚餐 AA 分帳小幫手", weight: "bold", color: "#FFFFFF", size: "md", flex: 1 },
+            { type: "text", text: `${data.headcount} 人同行`, size: "xs", color: "#E0F2E9", align: "end" }
+          ]
+        },
+        {
+          type: "text",
+          text: `$${data.per_person}`,
+          weight: "bold",
+          size: "3xl",
+          color: "#FFFFFF",
+          margin: "md"
+        },
+        {
+          type: "text",
+          text: "每人應付金額 (無條件進位)",
+          size: "xs",
+          color: "#E0F2E9"
+        }
+      ]
+    },
+    body: {
+      type: "box",
+      layout: "vertical",
+      spacing: "md",
+      paddingAll: "20px",
+      contents: [
+        {
+          type: "box",
+          layout: "horizontal",
+          contents: [
+            { type: "text", text: "消費原始總額", size: "sm", color: "#888888", flex: 1 },
+            { type: "text", text: `$${data.original_total}`, size: "sm", color: "#111111", align: "end", weight: "bold" }
+          ]
+        },
+        {
+          type: "box",
+          layout: "horizontal",
+          contents: [
+            { type: "text", text: `服務費 / 小費 (${data.tip_percent}%)`, size: "sm", color: "#888888", flex: 1 },
+            { type: "text", text: `+$${data.tip_amount}`, size: "sm", color: "#E15241", align: "end", weight: "bold" }
+          ]
+        },
+        {
+          type: "box",
+          layout: "horizontal",
+          contents: [
+            { type: "text", text: "應付結帳總額", size: "sm", color: "#888888", flex: 1 },
+            { type: "text", text: `$${data.final_total}`, size: "sm", color: "#111111", align: "end", weight: "bold" }
+          ]
+        },
+        { type: "separator", margin: "md" },
+        {
+          type: "box",
+          layout: "horizontal",
+          contents: [
+            { type: "text", text: "零錢差額 (多收總額)", size: "xs", color: "#AAAAAA", flex: 1 },
+            { type: "text", text: `$${data.remainder}`, size: "xs", color: "#888888", align: "end" }
+          ]
+        }
+      ]
+    },
+    footer: {
+      type: "box",
+      layout: "vertical",
+      spacing: "sm",
+      paddingAll: "15px",
+      contents: [
+        {
+          type: "button",
+          style: "primary",
+          color: "#00C300",
+          height: "sm",
+          action: {
+            type: "uri",
+            label: "🟢 開啟 LINE Pay 轉帳",
+            uri: "line://pay"
+          }
+        },
+        {
+          type: "button",
+          style: "secondary",
+          height: "sm",
+          action: {
+            type: "uri",
+            label: "📢 轉發分帳通知到群組",
+            uri: forwardUrl
+          }
+        }
+      ]
+    }
+  };
+
+  replyFlexMessage(replyToken, `每人應付 $${data.per_person} (AA分帳通知)`, flex);
+}
+
+// ==========================================
+// 9. 每日 2000ml 喝水代謝打卡
+// ==========================================
+function getTodayWater(userId) {
+  const todayKey = Utilities.formatDate(new Date(), "Asia/Taipei", "yyyy-MM-dd");
+  const key = `water_${userId}_${todayKey}`;
+  const val = getProperty(key);
+  return val ? parseInt(val) : 0;
+}
+
+function addWaterLog(userId, amount, replyToken) {
+  const todayKey = Utilities.formatDate(new Date(), "Asia/Taipei", "yyyy-MM-dd");
+  const key = `water_${userId}_${todayKey}`;
+  const current = getTodayWater(userId);
+  const updated = current + amount;
+  setProperty(key, updated.toString());
+
+  const target = 2000;
+  const percent = Math.min(100, Math.round((updated / target) * 100));
+  const remaining = Math.max(0, target - updated);
+
+  let cheers = "💧 記得多喝水維持代謝喔！";
+  if (percent >= 100) {
+    cheers = "🎉 太棒了！今天 2000ml 飲水目標已達標！保持滿分活力！";
+  } else if (percent >= 50) {
+    cheers = "💪 進度過半！繼續保持健康飲水好習慣！";
+  }
+
+  const flex = {
+    type: "bubble",
+    size: "mega",
+    header: {
+      type: "box",
+      layout: "vertical",
+      backgroundColor: "#2B90D9",
+      paddingAll: "20px",
+      contents: [
+        {
+          type: "box",
+          layout: "horizontal",
+          contents: [
+            { type: "text", text: "💧 每日健康飲水打卡", weight: "bold", color: "#FFFFFF", size: "md", flex: 1 },
+            { type: "text", text: `${percent}%`, size: "md", color: "#E0F2FE", align: "end", weight: "bold" }
+          ]
+        },
+        {
+          type: "text",
+          text: `${updated} / ${target} ml`,
+          weight: "bold",
+          size: "2xl",
+          color: "#FFFFFF",
+          margin: "md"
+        }
+      ]
+    },
+    body: {
+      type: "box",
+      layout: "vertical",
+      spacing: "md",
+      paddingAll: "20px",
+      contents: [
+        {
+          type: "box",
+          layout: "vertical",
+          backgroundColor: "#E2E8F0",
+          height: "8px",
+          cornerRadius: "4px",
+          contents: [
+            {
+              type: "box",
+              layout: "vertical",
+              backgroundColor: "#2B90D9",
+              width: `${percent}%`,
+              height: "8px",
+              cornerRadius: "4px"
+            }
+          ]
+        },
+        {
+          type: "box",
+          layout: "horizontal",
+          contents: [
+            { type: "text", text: "剩餘未達目標", size: "xs", color: "#888888", flex: 1 },
+            { type: "text", text: `${remaining} ml`, size: "xs", color: "#2B90D9", align: "end", weight: "bold" }
+          ]
+        },
+        {
+          type: "text",
+          text: cheers,
+          size: "xs",
+          color: "#555555",
+          wrap: true,
+          margin: "sm"
+        }
+      ]
+    },
+    footer: {
+      type: "box",
+      layout: "horizontal",
+      spacing: "sm",
+      paddingAll: "15px",
+      contents: [
+        {
+          type: "button",
+          style: "secondary",
+          height: "sm",
+          action: {
+            type: "postback",
+            label: "+250ml",
+            data: "action=drink_water&amount=250"
+          }
+        },
+        {
+          type: "button",
+          style: "secondary",
+          height: "sm",
+          action: {
+            type: "postback",
+            label: "+500ml",
+            data: "action=drink_water&amount=500"
+          }
+        }
+      ]
+    }
+  };
+
+  replyFlexMessage(replyToken, `今日已喝水 ${updated}ml (${percent}%)`, flex);
 }
