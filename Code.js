@@ -68,14 +68,19 @@ function doPost(e) {
 }
 
 function handleIncomingMessage(msg, replyToken, userId) {
-  // A. 位置訊息 (Location Message) -> 找洗手間
+  // A. 位置訊息 (Location Message) -> 依模式分流 (預設找美食餐廳)
   if (msg.type === "location") {
     const lat = msg.latitude;
     const lng = msg.longitude;
     setProperty(`user_lat_${userId}`, String(lat));
     setProperty(`user_lng_${userId}`, String(lng));
 
-    sendNearbyToilets(replyToken, lat, lng, msg.address || "您的位置");
+    const mode = getProperty(`user_mode_${userId}`, "food");
+    if (mode === "toilet") {
+      sendNearbyToilets(replyToken, lat, lng, msg.address || "您的位置");
+    } else {
+      sendNearbyRestaurants(replyToken, lat, lng, msg.address || "您的位置");
+    }
     return;
   }
 
@@ -89,8 +94,21 @@ function handleIncomingMessage(msg, replyToken, userId) {
   if (msg.type === "text") {
     const text = msg.text.trim();
 
-    if (text === "吃什麼" || text === "抽籤" || text === "隨便" || text.includes("美食盲盒")) {
+    if (text === "吃什麼" || text === "抽籤" || text === "隨便" || text.includes("美食盲盒") || text.includes("低卡吃什麼") || text.includes("配餐")) {
+      setProperty(`user_mode_${userId}`, "food");
       drawFoodSmartly(replyToken, userId);
+      return;
+    }
+
+    if (text === "找餐廳" || text === "附近餐廳" || text === "附近美食" || text === "餐廳") {
+      setProperty(`user_mode_${userId}`, "food");
+      const lat = parseFloat(getProperty(`user_lat_${userId}`, "0"));
+      const lng = parseFloat(getProperty(`user_lng_${userId}`, "0"));
+      if (lat !== 0 && lng !== 0) {
+        sendNearbyRestaurants(replyToken, lat, lng, "最近記憶位置");
+      } else {
+        replyTextMessage(replyToken, "🍽️ 請在 LINE 聊天室點擊左下角「＋」選擇【傳送位置資訊】，系統將立即為您搜尋周邊人氣餐廳與健康低卡美食！");
+      }
       return;
     }
 
@@ -99,7 +117,8 @@ function handleIncomingMessage(msg, replyToken, userId) {
       return;
     }
 
-    if (text === "找廁所" || text === "洗手間" || text === "廁所") {
+    if (text === "找廁所" || text === "洗手間" || text === "廁所" || text.includes("24H 廁所") || text.includes("公廁")) {
+      setProperty(`user_mode_${userId}`, "toilet");
       const lat = parseFloat(getProperty(`user_lat_${userId}`, "0"));
       const lng = parseFloat(getProperty(`user_lng_${userId}`, "0"));
       if (lat !== 0 && lng !== 0) {
@@ -123,7 +142,22 @@ function handleIncomingMessage(msg, replyToken, userId) {
 function handleIncomingPostback(data, replyToken, userId) {
   const params = parseQueryString(data);
 
-  // 一鍵記入今日熱量 (連動閉環)
+  // 1. 頁籤切換事件 (Rich Menu Alias)
+  if (params.action === "switch_tab") {
+    if (params.tab) {
+      setProperty(`user_mode_${userId}`, params.tab);
+    }
+    return;
+  }
+
+  // 2. 抽美食盲盒
+  if (params.action === "draw_food") {
+    setProperty(`user_mode_${userId}`, "food");
+    drawFoodSmartly(replyToken, userId);
+    return;
+  }
+
+  // 3. 一鍵記入今日熱量 (連動閉環)
   if (params.action === "eat_this") {
     const foodName = params.name || "美食餐點";
     const cal = parseInt(params.cal || "500");
@@ -134,17 +168,20 @@ function handleIncomingPostback(data, replyToken, userId) {
     return;
   }
 
-  // GPS 模式切換 (用同一個位置改找美食或洗手間)
-  if (params.action === "switch_gps") {
+  // 4. GPS 模式切換 (用同一個位置改找美食或洗手間)
+  if (params.action === "switch_gps" || params.action === "switch_gps_mode") {
     const target = params.target;
     const lat = parseFloat(getProperty(`user_lat_${userId}`, "25.04"));
     const lng = parseFloat(getProperty(`user_lng_${userId}`, "121.53"));
 
     if (target === "food") {
-      drawFoodSmartly(replyToken, userId);
+      setProperty(`user_mode_${userId}`, "food");
+      sendNearbyRestaurants(replyToken, lat, lng, "記憶定位據點");
     } else {
-      sendNearbyToilets(replyToken, lat, lng, "周邊據點");
+      setProperty(`user_mode_${userId}`, "toilet");
+      sendNearbyToilets(replyToken, lat, lng, "記憶定位據點");
     }
+    return;
   }
 }
 
@@ -209,7 +246,68 @@ function drawFoodSmartly(replyToken, userId) {
 }
 
 // ==========================================
-// 3. 連動閉環 2：附近友善洗手間 (LBS 定位)
+// 3. 連動閉環 2：附近美食餐廳 (LBS 定位)
+// ==========================================
+function sendNearbyRestaurants(replyToken, lat, lng, address) {
+  const spots = [
+    { name: "在地人氣牛肉麵 / 手工水餃", dist: "步行約 2 分鐘 (180m)", cal: "約 650 kcal", tag: "在地小吃" },
+    { name: "舒肥雞胸肉低卡健康便當", dist: "步行約 3 分鐘 (250m)", cal: "約 520 kcal", tag: "健康減脂" },
+    { name: "日式山藥蕎麥冷麵定食屋", dist: "步行約 4 分鐘 (320m)", cal: "約 480 kcal", tag: "清爽輕食" },
+    { name: "蔬食沙拉與輕食早午餐咖啡", dist: "步行約 5 分鐘 (410m)", cal: "約 390 kcal", tag: "低卡推薦" }
+  ];
+
+  const spotBoxes = spots.map(s => ({
+    type: "box", layout: "vertical", margin: "md", paddingAll: "sm", backgroundColor: "#FFF3E0", cornerRadius: "md",
+    contents: [
+      {
+        type: "box", layout: "horizontal",
+        contents: [
+          { type: "text", text: `🍽️ ${s.name}`, weight: "bold", size: "sm", color: "#E65100", flex: 3 },
+          { type: "text", text: s.tag, size: "xxs", color: "#BF360C", align: "end", flex: 1 }
+        ]
+      },
+      { type: "text", text: `📍 ${s.dist} | 🔥 ${s.cal}`, size: "xs", color: "#F57C00", margin: "xs" }
+    ]
+  }));
+
+  const flex = {
+    type: "bubble",
+    header: {
+      type: "box", layout: "vertical", backgroundColor: "#EA580C",
+      contents: [
+        { type: "text", text: "🍽️ 周邊人氣美食與餐廳導航", color: "#FFFFFF", weight: "bold", size: "lg" },
+        { type: "text", text: `目前位置：${address.substring(0, 20)}`, color: "#FFEDD5", size: "xs" }
+      ]
+    },
+    body: { type: "box", layout: "vertical", contents: spotBoxes },
+    footer: {
+      type: "box", layout: "vertical", spacing: "sm",
+      contents: [
+        {
+          type: "button", style: "primary", color: "#EA580C", height: "sm",
+          action: {
+            type: "uri",
+            label: "🧭 1-Click 開啟 Google 地圖找餐廳",
+            uri: `https://www.google.com/maps/search/?api=1&query=restaurants&query_place_id=${lat},${lng}`
+          }
+        },
+        {
+          type: "button", style: "secondary", height: "sm",
+          action: { type: "message", label: "🎲 依今日剩餘熱量智慧抽籤", text: "吃什麼" }
+        },
+        {
+          type: "button", style: "link", height: "sm",
+          action: { type: "postback", label: "🚻 應急需求：改看周邊友善洗手間", data: "action=switch_gps&target=toilet" }
+        }
+      ]
+    }
+  };
+
+  replyFlexMessage(replyToken, "🍽️ 周邊人氣餐廳導航", flex);
+}
+
+// ==========================================
+// 4. 連動閉環 3：附近友善洗手間 (LBS 定位)
 // ==========================================
 function sendNearbyToilets(replyToken, lat, lng, address) {
   const spots = [
@@ -246,7 +344,7 @@ function sendNearbyToilets(replyToken, lat, lng, address) {
         },
         {
           type: "button", style: "secondary", height: "sm",
-          action: { type: "postback", label: "🔄 用同一個定位改找附近美食", data: "action=switch_gps&target=food" }
+          action: { type: "postback", label: "🍽️ 用同一個定位改找附近美食", data: "action=switch_gps&target=food" }
         }
       ]
     }
