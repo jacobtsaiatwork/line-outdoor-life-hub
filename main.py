@@ -424,25 +424,35 @@ async def line_webhook(request: Request):
 
                 # B. GPS 位置訊息 (自動記憶座標，雙模組智慧共用)
                 elif isinstance(event.message, LocationMessageContent):
-                    loc = event.message
-                    res = handle_location_event(
-                        user_id=user_id,
-                        lat=loc.latitude,
-                        lng=loc.longitude,
-                        address=loc.address or "您傳送的定位"
-                    )
-                    reply_msgs = []
-                    if res.get("text_message"):
-                        reply_msgs.append(TextMessage(text=res["text_message"], quick_reply=get_hub_quick_reply()))
-                    if res.get("flex_contents"):
-                        reply_msgs.append(
-                            FlexMessage(
-                                alt_text=res.get("flex_alt_text", "📍 周邊探索結果"),
-                                contents=FlexContainer.from_json(json.dumps(res["flex_contents"])),
-                                quick_reply=get_hub_quick_reply()
+                    try:
+                        loc = event.message
+                        res = handle_location_event(
+                            user_id=user_id,
+                            lat=loc.latitude,
+                            lng=loc.longitude,
+                            address=loc.address or "您傳送的定位"
+                        )
+                        reply_msgs = []
+                        if res.get("text_message"):
+                            reply_msgs.append(TextMessage(text=res["text_message"], quick_reply=get_hub_quick_reply()))
+                        if res.get("flex_contents"):
+                            reply_msgs.append(
+                                FlexMessage(
+                                    alt_text=res.get("flex_alt_text", "📍 周邊探索結果"),
+                                    contents=FlexContainer.from_json(json.dumps(res["flex_contents"])),
+                                    quick_reply=get_hub_quick_reply()
+                                )
+                            )
+                        line_bot_api.reply_message(ReplyMessageRequest(reply_token=reply_token, messages=reply_msgs[:5]))
+                    except Exception as err:
+                        import traceback
+                        print(f"Error handling location event: {err}\n{traceback.format_exc()}")
+                        line_bot_api.reply_message(
+                            ReplyMessageRequest(
+                                reply_token=reply_token,
+                                messages=[TextMessage(text=f"⚠️ 定位處理遇到問題：{str(err)}", quick_reply=get_hub_quick_reply())]
                             )
                         )
-                    line_bot_api.reply_message(ReplyMessageRequest(reply_token=reply_token, messages=reply_msgs[:5]))
 
                 # C. 拍照上傳食物辨識
                 elif isinstance(event.message, ImageMessageContent):

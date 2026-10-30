@@ -246,7 +246,7 @@ def route_text_message(user_id: str, text: str) -> Dict[str, Any]:
 
     if intent == "gps_guide":
         target = meta.get("target", "food")
-        db.save_user_location(user_id, mode=target)
+        db.set_user_gps_mode(user_id, target)
         target_name = "友善洗手間" if target == "toilet" else "周邊人氣餐廳"
         return {
             "intent": intent,
