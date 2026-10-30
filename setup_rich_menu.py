@@ -269,7 +269,12 @@ def generate_rich_menu_images(output_dir: Optional[str] = None) -> Dict[str, str
     - `static/richmenu_toilet.png` (靛藍救急洗手間主題)
     """
     if not output_dir:
-        output_dir = os.path.join(os.path.dirname(__file__), "static")
+        # 雲端 Serverless (如 Vercel / AWS Lambda) 根目錄唯讀，使用 /tmp 或現有 static
+        default_static = os.path.join(os.path.dirname(__file__), "static")
+        if os.access(default_static, os.W_OK):
+            output_dir = default_static
+        else:
+            output_dir = "/tmp"
     os.makedirs(output_dir, exist_ok=True)
 
     themes = {
@@ -385,7 +390,19 @@ def deploy_multi_tab_rich_menus(access_token: Optional[str] = None) -> Dict[str,
     一鍵自動繪圖、建立 3 張 Rich Menu、上傳 PNG 圖檔、設定 Rich Menu Alias 並將 Tab 1 設為全員預設選單
     """
     token = (access_token or LINE_CHANNEL_ACCESS_TOKEN).strip()
-    image_paths = generate_rich_menu_images()
+    
+    # 優先檢查 static 目錄下是否已有現成的高畫質圖檔，若無才動態繪製至 /tmp
+    static_dir = os.path.join(os.path.dirname(__file__), "static")
+    bundled_images = {
+        ALIAS_FOOD: os.path.join(static_dir, "richmenu_food.png"),
+        ALIAS_CALORIE: os.path.join(static_dir, "richmenu_calorie.png"),
+        ALIAS_TOILET: os.path.join(static_dir, "richmenu_toilet.png"),
+    }
+    if all(os.path.exists(p) for p in bundled_images.values()):
+        image_paths = bundled_images
+    else:
+        image_paths = generate_rich_menu_images()
+
     payloads = build_all_rich_menu_payloads()
 
     if not token:
