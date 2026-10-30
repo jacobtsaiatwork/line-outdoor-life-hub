@@ -180,33 +180,170 @@ def init_db():
         );
         """)
 
+    _run_migrations_on_cursor(cursor, USE_POSTGRES)
     conn.commit()
     cursor.close()
     conn.close()
+
+
+def _run_migrations_on_cursor(cursor, is_postgres: bool):
+    """執行自動欄位補齊遷移 (確保既有資料庫即使未重建也能即時獲得最新欄位)"""
+    if is_postgres:
+        user_cols = [
+            ("gender", "TEXT DEFAULT '男'"),
+            ("height", "REAL DEFAULT 170.0"),
+            ("weight", "REAL DEFAULT 65.0"),
+            ("age", "INTEGER DEFAULT 28"),
+            ("activity", "TEXT DEFAULT '輕度'"),
+            ("bmr", "INTEGER DEFAULT 1600"),
+            ("tdee", "INTEGER DEFAULT 2200"),
+            ("target_calories", "INTEGER DEFAULT 2000"),
+            ("gps_mode", "TEXT DEFAULT 'food'"),
+            ("last_lat", "REAL"),
+            ("last_lng", "REAL"),
+            ("last_address", "TEXT DEFAULT ''"),
+            ("created_at", "TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP"),
+            ("updated_at", "TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP")
+        ]
+        for col_name, col_type in user_cols:
+            try:
+                cursor.execute(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS {col_name} {col_type};")
+            except Exception as e:
+                print(f"[Migration Warning] users.{col_name}: {e}")
+
+        meal_cols = [
+            ("protein_g", "INTEGER DEFAULT 0"),
+            ("carbs_g", "INTEGER DEFAULT 0"),
+            ("fat_g", "INTEGER DEFAULT 0"),
+            ("meal_type", "TEXT DEFAULT '餐點'"),
+            ("created_at", "TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP")
+        ]
+        for col_name, col_type in meal_cols:
+            try:
+                cursor.execute(f"ALTER TABLE meal_records ADD COLUMN IF NOT EXISTS {col_name} {col_type};")
+            except Exception as e:
+                print(f"[Migration Warning] meal_records.{col_name}: {e}")
+    else:
+        try:
+            cursor.execute("PRAGMA table_info(users);")
+            existing_user_cols = {col[1] for col in cursor.fetchall()}
+            user_cols = [
+                ("gender", "TEXT DEFAULT '男'"),
+                ("height", "REAL DEFAULT 170.0"),
+                ("weight", "REAL DEFAULT 65.0"),
+                ("age", "INTEGER DEFAULT 28"),
+                ("activity", "TEXT DEFAULT '輕度'"),
+                ("bmr", "INTEGER DEFAULT 1600"),
+                ("tdee", "INTEGER DEFAULT 2200"),
+                ("target_calories", "INTEGER DEFAULT 2000"),
+                ("gps_mode", "TEXT DEFAULT 'food'"),
+                ("last_lat", "REAL"),
+                ("last_lng", "REAL"),
+                ("last_address", "TEXT DEFAULT ''"),
+                ("created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"),
+                ("updated_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+            ]
+            for col_name, col_type in user_cols:
+                if col_name not in existing_user_cols:
+                    try:
+                        cursor.execute(f"ALTER TABLE users ADD COLUMN {col_name} {col_type};")
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        try:
+            cursor.execute("PRAGMA table_info(meal_records);")
+            existing_meal_cols = {col[1] for col in cursor.fetchall()}
+            meal_cols = [
+                ("protein_g", "INTEGER DEFAULT 0"),
+                ("carbs_g", "INTEGER DEFAULT 0"),
+                ("fat_g", "INTEGER DEFAULT 0"),
+                ("meal_type", "TEXT DEFAULT '餐點'"),
+                ("created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+            ]
+            for col_name, col_type in meal_cols:
+                if col_name not in existing_meal_cols:
+                    try:
+                        cursor.execute(f"ALTER TABLE meal_records ADD COLUMN {col_name} {col_type};")
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+
+def run_migrations():
+    """獨立對外遷移函式 (可手動或伺服器啟動時主動調用)"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        _run_migrations_on_cursor(cursor, USE_POSTGRES)
+        conn.commit()
+    except Exception as err:
+        print(f"[Run Migrations Error] {err}")
+    finally:
+        cursor.close()
+        conn.close()
 
 
 init_db()
 
 
 def ensure_user_exists(user_id: str):
-    """確保使用者記錄存在"""
-    profile = get_user_profile(user_id)
-    if not profile:
-        conn = get_connection()
-        cursor = conn.cursor()
-        if USE_POSTGRES:
-            cursor.execute(
-                "INSERT INTO users (user_id, target_calories, gps_mode) VALUES (%s, 2000, 'food') ON CONFLICT(user_id) DO NOTHING;",
-                (user_id,)
-            )
+    """確保使用者記錄存在 (具備欄位自動修復與安全回退)"""
+    try:
+        profile = get_user_profile(user_id)
+        if not profile:
+            conn = get_connection()
+            cursor = conn.cursor()
+            if USE_POSTGRES:
+                cursor.execute(
+                    "INSERT INTO users (user_id, target_calories, gps_mode) VALUES (%s, 2000, 'food') ON CONFLICT(user_id) DO NOTHING;",
+                    (user_id,)
+                )
+            else:
+                cursor.execute(
+                    "INSERT OR IGNORE INTO users (user_id, target_calories, gps_mode) VALUES (?, 2000, 'food');",
+                    (user_id,)
+                )
+            conn.commit()
+            cursor.close()
+            conn.close()
+    except Exception as e:
+        err_msg = str(e).lower()
+        if "gps_mode" in err_msg or "column" in err_msg:
+            run_migrations()
+            try:
+                conn = get_connection()
+                cursor = conn.cursor()
+                if USE_POSTGRES:
+                    cursor.execute(
+                        "INSERT INTO users (user_id, target_calories, gps_mode) VALUES (%s, 2000, 'food') ON CONFLICT(user_id) DO NOTHING;",
+                        (user_id,)
+                    )
+                else:
+                    cursor.execute(
+                        "INSERT OR IGNORE INTO users (user_id, target_calories, gps_mode) VALUES (?, 2000, 'food');",
+                        (user_id,)
+                    )
+                conn.commit()
+                cursor.close()
+                conn.close()
+            except Exception:
+                try:
+                    conn = get_connection()
+                    cursor = conn.cursor()
+                    if USE_POSTGRES:
+                        cursor.execute("INSERT INTO users (user_id) VALUES (%s) ON CONFLICT(user_id) DO NOTHING;", (user_id,))
+                    else:
+                        cursor.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?);", (user_id,))
+                    conn.commit()
+                    cursor.close()
+                    conn.close()
+                except Exception:
+                    pass
         else:
-            cursor.execute(
-                "INSERT OR IGNORE INTO users (user_id, target_calories, gps_mode) VALUES (?, 2000, 'food');",
-                (user_id,)
-            )
-        conn.commit()
-        cursor.close()
-        conn.close()
+            raise
 
 
 def save_user_profile(
@@ -271,9 +408,7 @@ def get_user_profile(user_id: str) -> Optional[Dict[str, Any]]:
     return dict(row) if row else None
 
 
-def save_user_location(user_id: str, lat: float, lng: float, address: str = "", gps_mode: Optional[str] = None):
-    """儲存使用者最新 GPS 座標，供『美食 × 洗手間』雙模組無縫共用"""
-    ensure_user_exists(user_id)
+def _do_save_user_location(user_id: str, lat: float, lng: float, address: str = "", gps_mode: Optional[str] = None):
     conn = get_connection()
     cursor = conn.cursor()
     if gps_mode:
@@ -303,18 +438,54 @@ def save_user_location(user_id: str, lat: float, lng: float, address: str = "", 
     conn.close()
 
 
+def save_user_location(user_id: str, lat: float, lng: float, address: str = "", gps_mode: Optional[str] = None):
+    """儲存使用者最新 GPS 座標，供『美食 × 洗手間』雙模組無縫共用 (具備欄位自動修復)"""
+    try:
+        ensure_user_exists(user_id)
+        _do_save_user_location(user_id, lat, lng, address, gps_mode)
+    except Exception as e:
+        err_msg = str(e).lower()
+        if "gps_mode" in err_msg or "column" in err_msg or "last_lat" in err_msg:
+            run_migrations()
+            try:
+                _do_save_user_location(user_id, lat, lng, address, gps_mode)
+            except Exception as retry_err:
+                print(f"[save_user_location warning] Failed to save GPS location: {retry_err}")
+        else:
+            raise
+
+
 def set_user_gps_mode(user_id: str, gps_mode: str):
-    """設定使用者當前偏好的定位模式 ('food' 或 'toilet')"""
-    ensure_user_exists(user_id)
-    conn = get_connection()
-    cursor = conn.cursor()
-    if USE_POSTGRES:
-        cursor.execute("UPDATE users SET gps_mode = %s, updated_at = CURRENT_TIMESTAMP WHERE user_id = %s;", (gps_mode, user_id))
-    else:
-        cursor.execute("UPDATE users SET gps_mode = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?;", (gps_mode, user_id))
-    conn.commit()
-    cursor.close()
-    conn.close()
+    """設定使用者當前偏好的定位模式 ('food' 或 'toilet') (具備欄位自動修復)"""
+    try:
+        ensure_user_exists(user_id)
+        conn = get_connection()
+        cursor = conn.cursor()
+        if USE_POSTGRES:
+            cursor.execute("UPDATE users SET gps_mode = %s, updated_at = CURRENT_TIMESTAMP WHERE user_id = %s;", (gps_mode, user_id))
+        else:
+            cursor.execute("UPDATE users SET gps_mode = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?;", (gps_mode, user_id))
+        conn.commit()
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        err_msg = str(e).lower()
+        if "gps_mode" in err_msg or "column" in err_msg:
+            run_migrations()
+            try:
+                conn = get_connection()
+                cursor = conn.cursor()
+                if USE_POSTGRES:
+                    cursor.execute("UPDATE users SET gps_mode = %s, updated_at = CURRENT_TIMESTAMP WHERE user_id = %s;", (gps_mode, user_id))
+                else:
+                    cursor.execute("UPDATE users SET gps_mode = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?;", (gps_mode, user_id))
+                conn.commit()
+                cursor.close()
+                conn.close()
+            except Exception:
+                pass
+        else:
+            raise
 
 
 def get_user_location(user_id: str) -> Optional[Dict[str, Any]]:

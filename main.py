@@ -137,6 +137,26 @@ class LocationSimRequest(BaseModel):
     mode: Optional[str] = None
 
 
+@app.on_event("startup")
+def on_startup():
+    try:
+        db.init_db()
+        db.run_migrations()
+        print("✅ Database migrations verified on startup.")
+    except Exception as err:
+        print(f"⚠️ Startup database migration warning: {err}")
+
+
+@app.get("/api/migrate-db")
+def api_migrate_db():
+    """手動觸發資料庫補齊遷移端點"""
+    try:
+        db.run_migrations()
+        return {"status": "ok", "message": "Database migrations executed successfully."}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
 @app.get("/", response_class=HTMLResponse)
 def index_page():
     html_file = os.path.join(os.path.dirname(__file__), "templates", "index.html")
