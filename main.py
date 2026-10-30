@@ -167,6 +167,15 @@ def api_rich_menu_config():
     }
 
 
+@app.get("/api/deploy-rich-menu")
+@app.post("/api/deploy-rich-menu")
+def api_deploy_rich_menu():
+    """在雲端一鍵建立並上傳 LINE Rich Menu Alias 三頁籤選單"""
+    from setup_rich_menu import deploy_multi_tab_rich_menus
+    return deploy_multi_tab_rich_menus()
+
+
+
 @app.post("/api/simulate/text")
 def api_simulate_text(req: TextSimRequest):
     """Web 互動預覽與自動化測試端點：模擬文字訊息路由"""
