@@ -77,8 +77,9 @@ def build_all_rich_menu_payloads() -> Dict[str, Dict[str, Any]]:
         {
             "bounds": {"x": 1667, "y": GRID_Y1, "width": 833, "height": GRID_H},
             "action": {
-                "type": "location",
-                "label": "傳定位找周邊餐廳"
+                "type": "message",
+                "label": "傳定位找周邊餐廳",
+                "text": "找附近餐廳"
             }
         },
         # Row 2
@@ -114,8 +115,9 @@ def build_all_rich_menu_payloads() -> Dict[str, Dict[str, Any]]:
         {
             "bounds": {"x": 0, "y": GRID_Y1, "width": 833, "height": GRID_H},
             "action": {
-                "type": "camera",
-                "label": "拍照AI算熱量"
+                "type": "message",
+                "label": "拍照AI算熱量",
+                "text": "拍照AI算熱量"
             }
         },
         {
@@ -167,8 +169,9 @@ def build_all_rich_menu_payloads() -> Dict[str, Dict[str, Any]]:
         {
             "bounds": {"x": 0, "y": GRID_Y1, "width": 833, "height": GRID_H},
             "action": {
-                "type": "location",
-                "label": "傳定位找最近廁所"
+                "type": "message",
+                "label": "傳定位找最近廁所",
+                "text": "找最近廁所"
             }
         },
         {

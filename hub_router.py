@@ -80,6 +80,15 @@ def classify_intent(text: str) -> Tuple[str, Dict[str, Any]]:
     if clean in ["清空今日紀錄", "重置今日", "清空紀錄"]:
         return ("clear_records", {})
 
+    # 拍照 AI 算熱量引導
+    if any(k in clean for k in ["拍照", "拍照ai算熱量", "照相", "拍食物"]):
+        return ("photo_guide", {})
+
+    # 傳定位引導
+    if clean in ["找附近餐廳", "傳定位找周邊餐廳", "找最近廁所", "傳定位找最近廁所"]:
+        target = "toilet" if "廁所" in clean else "food"
+        return ("gps_guide", {"target": target})
+
     # 8. TDEE / 瘦身計劃設定
     if any(k in lower for k in ["瘦身計劃", "瘦身計畫", "tdee", "個人檔案"]):
         return ("tdee_setup", {"raw_text": clean})
@@ -220,6 +229,34 @@ def route_text_message(user_id: str, text: str) -> Dict[str, Any]:
             "flex_alt_text": None,
             "flex_contents": None,
             "data": {}
+        }
+
+    if intent == "photo_guide":
+        return {
+            "intent": intent,
+            "text_message": (
+                "📸 【AI 智慧照片熱量辨識】\n"
+                "請直接點擊下方對話框的「相機 📷」或「相簿 🖼️」圖示，拍下或傳送便當、餐點照片，Gemini AI 將為您自動辨識食物名稱、卡路里與三大營養素！\n\n"
+                "💡 小技巧：也可以長按麥克風直接錄語音說「吃了排骨便當跟無糖綠茶」喔！"
+            ),
+            "flex_alt_text": None,
+            "flex_contents": None,
+            "data": {}
+        }
+
+    if intent == "gps_guide":
+        target = meta.get("target", "food")
+        db.save_user_location(user_id, mode=target)
+        target_name = "友善洗手間" if target == "toilet" else "周邊人氣餐廳"
+        return {
+            "intent": intent,
+            "text_message": (
+                f"📍 【尋找{target_name}】\n"
+                "請點擊輸入框下方的「傳送位置資訊 📍」按鈕，機器人會立即幫您秒搜離您最近的據點並附上 Google 地圖導航喔！"
+            ),
+            "flex_alt_text": None,
+            "flex_contents": None,
+            "data": {"target": target}
         }
 
     if intent == "tdee_setup":

@@ -171,8 +171,19 @@ def api_rich_menu_config():
 @app.post("/api/deploy-rich-menu")
 def api_deploy_rich_menu():
     """在雲端一鍵建立並上傳 LINE Rich Menu Alias 三頁籤選單"""
-    from setup_rich_menu import deploy_multi_tab_rich_menus
-    return deploy_multi_tab_rich_menus()
+    try:
+        from setup_rich_menu import deploy_multi_tab_rich_menus
+        return deploy_multi_tab_rich_menus()
+    except Exception as e:
+        import traceback
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "error": str(e),
+                "traceback": traceback.format_exc()
+            }
+        )
 
 
 
