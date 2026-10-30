@@ -38,6 +38,7 @@ from linebot.v3.webhooks import (
     TextMessageContent,
     LocationMessageContent,
     ImageMessageContent,
+    AudioMessageContent,
 )
 
 import database as db
@@ -56,13 +57,30 @@ parser = WebhookParser(LINE_CHANNEL_SECRET or "dummy_secret")
 
 app = FastAPI(
     title="🧭 外出生活三合一超級選單 LINE Bot (美食抽籤 × 熱量控制 × 附近洗手間)",
-    version="1.0.0",
+    version="1.1.0",
     description="深度整合美食盲盒、AI 熱量管家與救急友善洗手間雷達的三合一超級選單 LINE 官方帳號"
 )
 
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 os.makedirs(static_dir, exist_ok=True)
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+
+def send_line_loading_animation(chat_id: str, loading_seconds: int = 25):
+    """呼叫 LINE 原生載入中打字動畫 API (POST /v2/bot/chat/loading/start)"""
+    if not LINE_CHANNEL_ACCESS_TOKEN or LINE_CHANNEL_ACCESS_TOKEN == "dummy_token":
+        return
+    try:
+        import requests
+        url = "https://api.line.me/v2/bot/chat/loading/start"
+        headers = {
+            "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
+            "Content-Type": "application/json"
+        }
+        payload = {"chatId": chat_id, "loadingSeconds": min(60, max(5, loading_seconds))}
+        requests.post(url, headers=headers, json=payload, timeout=2.0)
+    except Exception:
+        pass
 
 
 def get_hub_quick_reply() -> QuickReply:
@@ -92,6 +110,9 @@ def get_hub_quick_reply() -> QuickReply:
                     display_text="🍽️ 找附近的人氣餐廳！"
                 )
             ),
+            QuickReplyItem(action=MessageAction(label="🗺️ 互動地圖", text="開啟地圖")),
+            QuickReplyItem(action=MessageAction(label="💳 快速分帳", text="分帳 1200 4人")),
+            QuickReplyItem(action=MessageAction(label="🗳️ 聚餐投票", text="吃什麼投票")),
             QuickReplyItem(action=MessageAction(label="💧 喝水 +300ml", text="喝水 300")),
             QuickReplyItem(action=MessageAction(label="🧭 三合一說明", text="功能說明")),
         ]
@@ -168,6 +189,123 @@ def api_simulate_location(req: LocationSimRequest):
         address=req.address,
         override_mode=req.mode
     )
+
+
+class ProfileUpdateRequest(BaseModel):
+    user_id: str
+    gender: str = "男"
+    weight: float = 65.0
+    height: float = 170.0
+    age: int = 28
+    activity: str = "輕度"
+    bmr: int = 1600
+    tdee: int = 2200
+    target_calories: int = 2000
+
+
+@app.get("/liff/dashboard", response_class=HTMLResponse)
+def liff_dashboard(request: Request):
+    """LIFF 體態與熱量儀表板頁面"""
+    path = os.path.join(os.path.dirname(__file__), "templates", "liff_dashboard.html")
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            return HTMLResponse(content=f.read())
+    return HTMLResponse(content="<h1>Dashboard not found</h1>")
+
+
+@app.get("/liff/map", response_class=HTMLResponse)
+def liff_map(request: Request):
+    """LIFF 外出全螢幕救急洗手間與美食互動地圖頁面"""
+    path = os.path.join(os.path.dirname(__file__), "templates", "liff_map.html")
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            return HTMLResponse(content=f.read())
+    return HTMLResponse(content="<h1>Map not found</h1>")
+
+
+@app.get("/api/liff/profile")
+def api_liff_profile(user_id: str = "demo_user"):
+    """LIFF 取得個人身形目標與今日熱量剩餘額度"""
+    profile = db.get_user_profile(user_id) or {}
+    summary = db.get_today_summary(user_id)
+    return {
+        "user_id": user_id,
+        "gender": profile.get("gender", "男"),
+        "weight": profile.get("weight", 65.0),
+        "height": profile.get("height", 170.0),
+        "age": profile.get("age", 28),
+        "activity": profile.get("activity", "輕度"),
+        "bmr": profile.get("bmr", 1600),
+        "tdee": profile.get("tdee", 2200),
+        "target_calories": profile.get("target_calories", 2000),
+        "consumed_calories": summary["total_calories"],
+        "remaining_calories": summary["remaining_calories"]
+    }
+
+
+@app.post("/api/liff/profile")
+def api_liff_save_profile(req: ProfileUpdateRequest):
+    """LIFF 儲存更新個人身形目標"""
+    db.save_user_profile(
+        user_id=req.user_id,
+        gender=req.gender,
+        height=req.height,
+        weight=req.weight,
+        age=req.age,
+        activity=req.activity,
+        bmr=req.bmr,
+        tdee=req.tdee,
+        target_calories=req.target_calories
+    )
+    return {"status": "success", "message": "Profile updated successfully"}
+
+
+@app.get("/api/liff/records")
+def api_liff_records(user_id: str = "demo_user"):
+    """LIFF 取得近 7 天飲食熱量趨勢"""
+    history = db.get_recent_history(user_id, days=7)
+    return {"user_id": user_id, "history": history}
+
+
+@app.get("/api/liff/nearby")
+def api_liff_nearby(lat: float = 25.0330, lng: float = 121.5654):
+    """LIFF 互動地圖據點 API：整合環境部特優公廁與人氣餐廳"""
+    from toilet_module import find_nearby_toilets
+    from food_module import get_nearby_restaurants
+
+    toilets = find_nearby_toilets(lat, lng, limit=12)
+    restaurants = get_nearby_restaurants(lat, lng)
+
+    items = []
+    for t in toilets:
+        items.append({
+            "id": f"toilet_{t['name']}",
+            "name": t["name"],
+            "category": t.get("category", "moenv_gov"),
+            "category_name": t.get("category_name", "🚻 友善洗手間"),
+            "latitude": t["latitude"],
+            "longitude": t["longitude"],
+            "address": t.get("address", ""),
+            "distance_meters": t.get("distance_meters", 100),
+            "walk_minutes": t.get("walk_minutes", 2),
+            "tags": t.get("tags", [])
+        })
+
+    for idx, r in enumerate(restaurants):
+        items.append({
+            "id": f"food_{idx}",
+            "name": r["name"],
+            "category": "restaurant",
+            "category_name": "🍽️ 周邊餐廳",
+            "latitude": lat + (0.0012 * (idx + 1)),
+            "longitude": lng + (-0.0009 * (idx + 1)),
+            "address": r.get("distance_str", "步行約 5 分鐘"),
+            "distance_meters": 200 + (idx * 50),
+            "walk_minutes": 3 + idx,
+            "tags": [f"⭐ {r.get('rating', 4.5)}", f"🔥 約 {r.get('estimated_calories', 550)} kcal"]
+        })
+
+    return {"lat": lat, "lng": lng, "items": items}
 
 
 @app.post("/callback")
@@ -288,6 +426,7 @@ async def line_webhook(request: Request):
 
                 # C. 拍照上傳食物辨識
                 elif isinstance(event.message, ImageMessageContent):
+                    send_line_loading_animation(user_id, 30)
                     try:
                         img_bytes = line_bot_blob_api.get_message_content(event.message.id)
                         data = calorie_ai_service.analyze_food(image_bytes=img_bytes)
@@ -310,6 +449,38 @@ async def line_webhook(request: Request):
                             messages=[
                                 FlexMessage(
                                     alt_text=f"📸 餐點熱量分析：{data.get('food_name', '餐點')}",
+                                    contents=FlexContainer.from_json(json.dumps(bubble)),
+                                    quick_reply=get_hub_quick_reply()
+                                )
+                            ]
+                        )
+                    )
+
+                # D. 語音訊息輸入 (Voice-to-Log)
+                elif isinstance(event.message, AudioMessageContent):
+                    send_line_loading_animation(user_id, 30)
+                    try:
+                        audio_bytes = line_bot_blob_api.get_message_content(event.message.id)
+                        data = calorie_ai_service.analyze_audio(audio_bytes=audio_bytes)
+                    except Exception:
+                        data = calorie_ai_service.analyze_audio(audio_bytes=b"")
+
+                    bubble = build_food_analysis_flex(
+                        food_name=data.get("food_name", "🎙️ 語音辨識餐點"),
+                        calories=int(data.get("calories", 655)),
+                        protein_g=int(data.get("protein_g", 42)),
+                        carbs_g=int(data.get("carbs_g", 66)),
+                        fat_g=int(data.get("fat_g", 23)),
+                        health_rating=data.get("health_rating", "語音智慧辨識"),
+                        advice=data.get("advice", ""),
+                        items=data.get("items", [])
+                    )
+                    line_bot_api.reply_message(
+                        ReplyMessageRequest(
+                            reply_token=reply_token,
+                            messages=[
+                                FlexMessage(
+                                    alt_text=f"🎙️ 語音飲食紀錄：{data.get('food_name', '餐點')}",
                                     contents=FlexContainer.from_json(json.dumps(bubble)),
                                     quick_reply=get_hub_quick_reply()
                                 )

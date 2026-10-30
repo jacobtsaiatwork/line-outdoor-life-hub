@@ -8,6 +8,7 @@
 4. 美食口袋收藏清單 (favorite_foods)
 """
 import os
+import json
 from datetime import date
 from typing import Optional, Dict, Any, List
 from dotenv import load_dotenv
@@ -100,6 +101,17 @@ def init_db():
             UNIQUE(user_id, item_name)
         );
         """)
+
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS polls (
+            poll_id TEXT PRIMARY KEY,
+            created_by TEXT NOT NULL,
+            title TEXT NOT NULL,
+            options_json TEXT NOT NULL,
+            votes_json TEXT DEFAULT '{}',
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+        """)
     else:
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
@@ -154,6 +166,17 @@ def init_db():
             calories INTEGER DEFAULT 500,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(user_id, item_name)
+        );
+        """)
+
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS polls (
+            poll_id TEXT PRIMARY KEY,
+            created_by TEXT NOT NULL,
+            title TEXT NOT NULL,
+            options_json TEXT NOT NULL,
+            votes_json TEXT DEFAULT '{}',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         """)
 
@@ -491,3 +514,126 @@ def get_favorite_foods(user_id: str) -> List[Dict[str, Any]]:
     cursor.close()
     conn.close()
     return rows
+
+
+def create_poll(poll_id: str, created_by: str, title: str, options: List[Dict[str, Any]]) -> Dict[str, Any]:
+    conn = get_connection()
+    cursor = conn.cursor()
+    options_json = json.dumps(options, ensure_ascii=False)
+    votes_json = json.dumps({}, ensure_ascii=False)
+    if USE_POSTGRES:
+        cursor.execute("""
+        INSERT INTO polls (poll_id, created_by, title, options_json, votes_json)
+        VALUES (%s, %s, %s, %s, %s)
+        ON CONFLICT(poll_id) DO UPDATE SET options_json=EXCLUDED.options_json;
+        """, (poll_id, created_by, title, options_json, votes_json))
+    else:
+        cursor.execute("""
+        INSERT OR REPLACE INTO polls (poll_id, created_by, title, options_json, votes_json)
+        VALUES (?, ?, ?, ?, ?);
+        """, (poll_id, created_by, title, options_json, votes_json))
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return {"poll_id": poll_id, "title": title, "options": options, "votes": {}}
+
+
+def vote_poll(poll_id: str, user_id: str, option_idx: int) -> Optional[Dict[str, Any]]:
+    conn = get_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor) if USE_POSTGRES else conn.cursor()
+    if USE_POSTGRES:
+        cursor.execute("SELECT * FROM polls WHERE poll_id = %s;", (poll_id,))
+    else:
+        cursor.execute("SELECT * FROM polls WHERE poll_id = ?;", (poll_id,))
+    row = cursor.fetchone()
+    if not row:
+        cursor.close()
+        conn.close()
+        return None
+    r_dict = dict(row)
+    votes = json.loads(r_dict.get("votes_json") or "{}")
+    votes[user_id] = option_idx
+    new_votes_json = json.dumps(votes, ensure_ascii=False)
+
+    update_cursor = conn.cursor()
+    if USE_POSTGRES:
+        update_cursor.execute("UPDATE polls SET votes_json = %s WHERE poll_id = %s;", (new_votes_json, poll_id))
+    else:
+        update_cursor.execute("UPDATE polls SET votes_json = ? WHERE poll_id = ?;", (new_votes_json, poll_id))
+    conn.commit()
+    update_cursor.close()
+    cursor.close()
+    conn.close()
+
+    options = json.loads(r_dict.get("options_json") or "[]")
+    return {
+        "poll_id": poll_id,
+        "title": r_dict.get("title", ""),
+        "options": options,
+        "votes": votes
+    }
+
+
+def get_poll(poll_id: str) -> Optional[Dict[str, Any]]:
+    conn = get_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor) if USE_POSTGRES else conn.cursor()
+    if USE_POSTGRES:
+        cursor.execute("SELECT * FROM polls WHERE poll_id = %s;", (poll_id,))
+    else:
+        cursor.execute("SELECT * FROM polls WHERE poll_id = ?;", (poll_id,))
+    row = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    if not row:
+        return None
+    r_dict = dict(row)
+    return {
+        "poll_id": poll_id,
+        "title": r_dict.get("title", ""),
+        "options": json.loads(r_dict.get("options_json") or "[]"),
+        "votes": json.loads(r_dict.get("votes_json") or "{}"),
+        "created_by": r_dict.get("created_by", "")
+    }
+
+
+def get_recent_history(user_id: str, days: int = 7) -> List[Dict[str, Any]]:
+    """取得最近幾天的飲食與熱量統計（供 LIFF 圖表使用）"""
+    from datetime import timedelta
+    conn = get_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor) if USE_POSTGRES else conn.cursor()
+    
+    result = []
+    today = date.today()
+    for i in range(days - 1, -1, -1):
+        target_date = today - timedelta(days=i)
+        d_str = target_date.isoformat()
+        if USE_POSTGRES:
+            cursor.execute("""
+            SELECT COALESCE(SUM(calories), 0) as total_cal,
+                   COALESCE(SUM(protein_g), 0) as total_protein,
+                   COALESCE(SUM(carbs_g), 0) as total_carbs,
+                   COALESCE(SUM(fat_g), 0) as total_fat
+            FROM meal_records WHERE user_id = %s AND record_date = %s;
+            """, (user_id, d_str))
+        else:
+            cursor.execute("""
+            SELECT COALESCE(SUM(calories), 0) as total_cal,
+                   COALESCE(SUM(protein_g), 0) as total_protein,
+                   COALESCE(SUM(carbs_g), 0) as total_carbs,
+                   COALESCE(SUM(fat_g), 0) as total_fat
+            FROM meal_records WHERE user_id = ? AND record_date = ?;
+            """, (user_id, d_str))
+        row = cursor.fetchone()
+        row_dict = dict(row) if row else {}
+        result.append({
+            "date": d_str,
+            "display_date": target_date.strftime("%m/%d"),
+            "calories": int(row_dict.get("total_cal", 0)),
+            "protein": int(row_dict.get("total_protein", 0)),
+            "carbs": int(row_dict.get("total_carbs", 0)),
+            "fat": int(row_dict.get("total_fat", 0))
+        })
+    cursor.close()
+    conn.close()
+    return result
+

@@ -179,6 +179,89 @@ class TestOutdoorLifeHub(unittest.TestCase):
         r_webhook = self.client.post("/callback", content="{}")
         self.assertEqual(r_webhook.status_code, 200)
 
+    def test_08_bill_split_and_dining_poll(self):
+        """測試外出 AA 制快速分帳與多人聚餐 3 選 1 投票閉環"""
+        # 1. 快速分帳
+        split_res = route_text_message(self.user_id, "分帳 1200 4人 10%")
+        self.assertEqual(split_res["intent"], "bill_split")
+        self.assertEqual(split_res["data"]["total"], 1200.0)
+        self.assertEqual(split_res["data"]["heads"], 4)
+        self.assertIn("💳", split_res["text_message"])
+        self.assertIn("每人應付", str(split_res["flex_contents"]))
+
+        # 2. 發起聚餐 3 選 1 投票
+        poll_res = route_text_message(self.user_id, "吃什麼投票")
+        self.assertEqual(poll_res["intent"], "food_poll")
+        poll_id = poll_res["data"]["poll_id"]
+        self.assertEqual(len(poll_res["data"]["options"]), 3)
+
+        # 3. 投給第 1 個選項
+        vote_pb = f"action=vote_poll&poll_id={poll_id}&idx=0"
+        vote_res = handle_postback_action(self.user_id, vote_pb)
+        self.assertEqual(vote_res["action"], "vote_poll")
+        self.assertEqual(vote_res["data"]["votes"][self.user_id], 0)
+
+        # 4. 查看即時開票
+        view_pb = f"action=view_poll&poll_id={poll_id}"
+        view_res = handle_postback_action(self.user_id, view_pb)
+        self.assertEqual(view_res["action"], "view_poll")
+        self.assertEqual(len(view_res["data"]["votes"]), 1)
+
+    def test_09_moenv_public_toilet_and_weather(self):
+        """測試環境部列管特優公廁資料庫整合與天氣防護建議"""
+        from weather_module import get_outdoor_weather
+        from toilet_module import find_nearby_toilets, haversine_distance
+
+        # 1. 測試台北車站座標 (25.0463, 121.5175)，應命中環境部特優公廁
+        toilets = find_nearby_toilets(25.0463, 121.5175, radius_meters=1500)
+        self.assertGreaterEqual(len(toilets), 1)
+        first_t = toilets[0]
+        self.assertTrue(any("特優" in tag for tag in first_t.get("tags", [])))
+
+        # 2. 測試天氣防護模組
+        weather = get_outdoor_weather(25.0463, 121.5175)
+        self.assertIn("temperature", weather)
+        self.assertIn("condition", weather)
+        self.assertIn("advisory", weather)
+
+        # 3. 測試位置事件是否包含天氣提醒
+        loc_res = handle_location_event(self.user_id, 25.0463, 121.5175, "台北車站")
+        self.assertIn("weather", loc_res["data"])
+        self.assertIn(weather["condition"], loc_res["text_message"])
+
+    def test_10_liff_endpoints_and_audio_nutrition(self):
+        """測試 LIFF 網頁端點、REST API 與語音多模態分析"""
+        # 1. LIFF 頁面載入
+        r_dash = self.client.get("/liff/dashboard")
+        self.assertEqual(r_dash.status_code, 200)
+        self.assertIn("Chart.js", r_dash.text)
+
+        r_map = self.client.get("/liff/map")
+        self.assertEqual(r_map.status_code, 200)
+        self.assertIn("Leaflet", r_map.text)
+
+        # 2. LIFF Profile API
+        r_prof = self.client.get(f"/api/liff/profile?user_id={self.user_id}")
+        self.assertEqual(r_prof.status_code, 200)
+        self.assertIn("target_calories", r_prof.json())
+
+        # 3. LIFF Records API
+        r_rec = self.client.get(f"/api/liff/records?user_id={self.user_id}")
+        self.assertEqual(r_rec.status_code, 200)
+        self.assertEqual(len(r_rec.json()["history"]), 7)
+
+        # 4. LIFF Nearby Map Points API
+        r_nearby = self.client.get("/api/liff/nearby?lat=25.0463&lng=121.5175")
+        self.assertEqual(r_nearby.status_code, 200)
+        self.assertGreater(len(r_nearby.json()["items"]), 5)
+
+        # 5. 語音營養辨識分析回退
+        audio_res = calorie_ai_service.analyze_audio(audio_bytes=b"fake_audio_bytes")
+        self.assertTrue(audio_res["is_food"])
+        self.assertIn("calories", audio_res)
+        self.assertGreater(audio_res["calories"], 0)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+

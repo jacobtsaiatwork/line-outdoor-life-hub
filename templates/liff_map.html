@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>🗺️ 外出生活全螢幕雷達地圖 (LIFF)</title>
+    <!-- LIFF SDK -->
+    <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <!-- Leaflet CSS & JS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        :root {
+            --bg-dark: #0f172a;
+            --card-dark: #1e293b;
+            --primary: #0284c7;
+            --text-light: #f8fafc;
+            --text-muted: #94a3b8;
+            --border: #334155;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Microsoft JhengHei", sans-serif; }
+        html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg-dark); color: var(--text-light); }
+        #map { width: 100%; height: 100%; z-index: 10; }
+        
+        /* 頂部浮動篩選標籤列 */
+        .filter-bar {
+            position: absolute;
+            top: 12px;
+            left: 12px;
+            right: 12px;
+            z-index: 1000;
+            display: flex;
+            gap: 8px;
+            overflow-x: auto;
+            padding-bottom: 4px;
+            scrollbar-width: none;
+        }
+        .filter-bar::-webkit-scrollbar { display: none; }
+        .chip {
+            background: rgba(15, 23, 42, 0.88);
+            backdrop-filter: blur(8px);
+            border: 1px solid var(--border);
+            color: #fff;
+            padding: 8px 14px;
+            border-radius: 999px;
+            font-size: 0.82rem;
+            font-weight: 700;
+            white-space: nowrap;
+            cursor: pointer;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+            transition: all 0.2s;
+        }
+        .chip.active {
+            background: #0284c7;
+            border-color: #38bdf8;
+            color: #fff;
+        }
+
+        /* 右下角定位與控制按鈕 */
+        .fab-group {
+            position: absolute;
+            bottom: 24px;
+            right: 16px;
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .fab {
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            background: #1e293b;
+            border: 1px solid var(--border);
+            color: #fff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.3rem;
+            cursor: pointer;
+            box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+        }
+        .fab.locate { background: #0284c7; }
+
+        /* 自訂 Leaflet Popup 樣式 */
+        .leaflet-popup-content-wrapper {
+            background: #1e293b !important;
+            color: #fff !important;
+            border-radius: 14px !important;
+            padding: 4px !important;
+            border: 1px solid #334155;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5) !important;
+        }
+        .leaflet-popup-tip { background: #1e293b !important; }
+        .popup-card h3 { font-size: 0.95rem; margin-bottom: 4px; color: #f8fafc; }
+        .popup-card p { font-size: 0.8rem; color: #94a3b8; margin-bottom: 8px; }
+        .popup-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px; }
+        .popup-tag { font-size: 0.7rem; background: rgba(56, 189, 248, 0.15); color: #38bdf8; padding: 2px 6px; border-radius: 4px; font-weight: bold; }
+        .btn-nav {
+            display: block;
+            width: 100%;
+            background: #10b981;
+            color: #fff;
+            text-align: center;
+            padding: 8px;
+            border-radius: 8px;
+            font-size: 0.82rem;
+            font-weight: bold;
+            text-decoration: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="filter-bar">
+        <div class="chip active" onclick="setFilter('all', this)">🌐 全部顯示</div>
+        <div class="chip" onclick="setFilter('grade_top', this)">🏛️ 特優列管公廁</div>
+        <div class="chip" onclick="setFilter('wheelchair', this)">♿ 無障礙</div>
+        <div class="chip" onclick="setFilter('diaper', this)">🍼 親子尿布檯</div>
+        <div class="chip" onclick="setFilter('24h', this)">🕒 24H 開放</div>
+        <div class="chip" onclick="setFilter('food', this)">🍽️ 周邊餐廳</div>
+    </div>
+
+    <div id="map"></div>
+
+    <div class="fab-group">
+        <div class="fab locate" onclick="locateUser()" title="定位我的位置">📍</div>
+        <div class="fab" onclick="closeLIFF()" title="關閉返回聊天室">✕</div>
+    </div>
+
+    <script>
+        let map;
+        let markers = [];
+        let allPoints = [];
+        let userMarker = null;
+        let currentFilter = 'all';
+        let currentLat = 25.0330;
+        let currentLng = 121.5654;
+
+        async function init() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const latParam = parseFloat(urlParams.get('lat'));
+            const lngParam = parseFloat(urlParams.get('lng'));
+            if (!isNaN(latParam) && !isNaN(lngParam)) {
+                currentLat = latParam;
+                currentLng = lngParam;
+            }
+
+            // 初始化 Leaflet
+            map = L.map('map', { zoomControl: false }).setView([currentLat, currentLng], 15);
+
+            // 加入 Dark / Stadia / OpenStreetMap 圖資
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19,
+                attribution: '&copy; OpenStreetMap'
+            }).addTo(map);
+
+            // 標註使用者位置
+            setUserMarker(currentLat, currentLng);
+
+            // LIFF 初始化
+            try {
+                if (typeof liff !== "undefined") {
+                    await liff.init({ liffId: window.LIFF_ID || "2000000000-xxxxxx" });
+                }
+            } catch (e) {
+                console.log("LIFF standalone mode");
+            }
+
+            // 載入附近公廁與餐廳
+            loadNearbyData(currentLat, currentLng);
+        }
+
+        function setUserMarker(lat, lng) {
+            if (userMarker) map.removeLayer(userMarker);
+            userMarker = L.circleMarker([lat, lng], {
+                radius: 9,
+                fillColor: '#38bdf8',
+                color: '#fff',
+                weight: 3,
+                opacity: 1,
+                fillOpacity: 0.9
+            }).addTo(map);
+            userMarker.bindPopup("<b>📍 您的位置</b>").openPopup();
+        }
+
+        async function loadNearbyData(lat, lng) {
+            try {
+                const res = await fetch(`/api/liff/nearby?lat=${lat}&lng=${lng}`);
+                if (res.ok) {
+                    const data = await res.json();
+                    allPoints = data.items || [];
+                    renderMarkers();
+                }
+            } catch (err) {
+                console.error("載入地圖據點失敗:", err);
+            }
+        }
+
+        function renderMarkers() {
+            markers.forEach(m => map.removeLayer(m));
+            markers = [];
+
+            allPoints.forEach(p => {
+                if (currentFilter === 'food' && p.category !== 'restaurant') return;
+                if (currentFilter === 'grade_top' && (!p.tags || !p.tags.includes('🏆 特優級'))) return;
+                if (currentFilter === 'wheelchair' && (!p.tags || !p.tags.includes('♿ 無障礙'))) return;
+                if (currentFilter === 'diaper' && (!p.tags || !p.tags.includes('🍼 尿布檯'))) return;
+                if (currentFilter === '24h' && (!p.tags || !p.tags.includes('🕒 24H'))) return;
+
+                let markerColor = p.category === 'restaurant' ? '#ea580c' : (p.category === 'moenv_gov' ? '#0d9488' : '#0284c7');
+                let tagBadges = (p.tags || []).map(t => `<span class="popup-tag">${t}</span>`).join('');
+
+                let popupHtml = `
+                    <div class="popup-card">
+                        <h3>${p.name}</h3>
+                        <p>🚶 步行約 ${p.walk_minutes || 2} 分鐘 (${p.distance_meters || 120}m)<br>${p.address || ''}</p>
+                        <div class="popup-tags">${tagBadges}</div>
+                        <a href="https://www.google.com/maps/dir/?api=1&destination=${p.latitude},${p.longitude}" target="_blank" class="btn-nav">🗺️ 開啟 Google 導航</a>
+                    </div>
+                `;
+
+                let icon = L.divIcon({
+                    className: 'custom-pin',
+                    html: `<div style="background-color: ${markerColor}; width: 26px; height: 26px; border-radius: 50%; border: 2px solid #fff; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 13px; box-shadow: 0 4px 10px rgba(0,0,0,0.4);">${p.category === 'restaurant' ? '🍽️' : '🚻'}</div>`,
+                    iconSize: [26, 26],
+                    iconAnchor: [13, 13]
+                });
+
+                let m = L.marker([p.latitude, p.longitude], { icon: icon }).bindPopup(popupHtml);
+                m.addTo(map);
+                markers.push(m);
+            });
+        }
+
+        function setFilter(type, el) {
+            currentFilter = type;
+            document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+            el.classList.add('active');
+            renderMarkers();
+        }
+
+        function locateUser() {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    (pos) => {
+                        currentLat = pos.coords.latitude;
+                        currentLng = pos.coords.longitude;
+                        map.setView([currentLat, currentLng], 16);
+                        setUserMarker(currentLat, currentLng);
+                        loadNearbyData(currentLat, currentLng);
+                    },
+                    (err) => { alert("無法取得目前定位：" + err.message); },
+                    { enableHighAccuracy: true, timeout: 6000 }
+                );
+            } else {
+                alert("此裝置不支援 HTML5 定位");
+            }
+        }
+
+        function closeLIFF() {
+            if (typeof liff !== "undefined" && liff.isInClient()) {
+                liff.closeWindow();
+            } else {
+                window.close();
+            }
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>

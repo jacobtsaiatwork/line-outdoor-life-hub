@@ -34,8 +34,16 @@ flowchart LR
      - `🔥 就決定吃這個！一鍵記入今日熱量`（Postback `action=eat_this&food_name=...&calories=...&protein=...`）：點擊後免打字、免拍照，直接將該餐點寫入今日飲食紀錄，並彈出更新後的今日熱量儀表板卡片！
      - `🎲 換一個（再抽一次）`
      - `🚻 找附近的友善洗手間`
-3. **【連動 3：GPS 定位一次傳送，雙模組智慧共用】**：
-   - 當使用者傳送 LINE 位置訊息（Location Message）時，系統除了根據當前模式（找廁所或找美食）立即回傳周邊據點（如速食店、加油站、超商、咖啡廳、公園公廁、圖書館、百貨洗手間，含 `🕒 24H` / `♿ 無障礙` / `🍼 尿布檯` 標籤與步行時間），卡片底部還提供 **「🔄 用同一個定位改找附近美食 / 附近洗手間」**（自動記憶使用者最新 GPS 座標於資料庫中，完全不需重複傳送定位！）。
+3. **【連動 3：GPS 定位一次傳送，雙模組智慧共用 ＋ 外出天氣防護警報】**：
+   - 當使用者傳送 LINE 位置訊息（Location Message）時，系統除了自動整合中央氣象署 / Open-Meteo 降雨機率與紫外線指數給予外出建議（雨天優先推薦室內捷運/百貨、艷陽提醒防曬補充水分），更直接串接**台灣環境部 (MOENV) 全國列管公廁資料集**，標註 `🏆 特優級`、`♿ 無障礙`、`🍼 尿布檯`、`🕒 24H`，卡片底部更提供 **「🔄 用同一個定位改找附近美食 / 附近洗手間」**。
+4. **【LIFF 雙核心微前端應用 (LINE Front-end Framework)】**：
+   - **`🗺️ 全螢幕公廁與美食地圖 (/liff/map)`**：以 Leaflet.js + OSM 繪製沉浸式互動地圖，依特優、無障礙、24H 即時篩選並一鍵開啟 Google Maps 導航！
+   - **`📈 體態目標與熱量走勢儀表板 (/liff/dashboard)`**：免對話框洗版，透過 Chart.js 檢視 7 天熱量與目標走勢，提供滑動拉桿即時動態計算 BMR / TDEE 並一鍵同步後端。
+5. **【外出社交與語音延伸】**：
+   - **💳 外出聚餐 AA 制快速分帳**：輸入「分帳 1200 4人 10%」，立即生成精準應付金額與整除備忘卡片。
+   - **🗳️ 多人聚餐 3 選 1 投票**：群組出門輸入「吃什麼投票」，隨機推薦 3 家不同風格料理並支援即時投票開票。
+   - **🎙️ 語音飲食紀錄 (Voice-to-Log)**：直接傳送 LINE 語音訊息，由 Gemini 多模態音訊直接辨識菜色並結構化入帳。
+   - **⏳ LINE 原生打字中載入動畫**：在辨識照片與語音時自動觸發 `POST /v2/bot/chat/loading/start`，徹底告別卡頓焦慮。
 
 ---
 
@@ -43,21 +51,21 @@ flowchart LR
 
 ```text
 line-outdoor-life-hub/
-├── main.py               # FastAPI 伺服器、LINE Webhook (/callback) 與 Web 模擬 API 端點
-├── hub_router.py         # 三合一跨模組意圖路由器與 Postback / Location 閉環控制器
+├── main.py               # FastAPI 伺服器、LINE Webhook (/callback)、LIFF 端點與 REST API
+├── hub_router.py         # 三合一跨模組意圖路由器、分帳/投票與 Postback 閉環控制器
 ├── food_module.py        # 美食盲盒資料庫、依剩餘熱量篩選邏輯與 Google Places 周邊餐廳搜尋
-├── calorie_module.py     # BMR/TDEE 計算、Gemini Vision 拍照辨識與自然語言飲食熱量估算
-├── toilet_module.py      # 救急友善洗手間雷達 (24H/無障礙/尿布檯標籤與步行時間計算)
-├── flex_builder.py       # 三合一高質感 LINE Flex Message 卡片與 Carousel 輪播產生器
-├── database.py           # SQLite / Supabase PostgreSQL 雙支援資料庫 (含 GPS 記憶與飲食記帳)
+├── calorie_module.py     # BMR/TDEE 計算、Gemini Vision 拍照與語音多模態飲食分析
+├── toilet_module.py      # 環境部列管特優公廁資料庫、救急友善洗手間雷達 (24H/無障礙/尿布檯)
+├── weather_module.py     # 即時氣象、降雨機率與紫外線外出防護模組 (Open-Meteo)
+├── flex_builder.py       # 三合一高質感 LINE Flex Message 卡片、Carousel 輪播與投票分帳產生器
+├── database.py           # SQLite / Supabase PostgreSQL 雙支援 (GPS記憶、飲食記帳、投票狀態)
 ├── setup_rich_menu.py    # Pillow 三頁籤圖文選單自動繪製與 LINE Rich Menu Alias 部署腳本
-├── test_outdoor_hub.py   # 完整單元與整合測試套件 (7 大核心測試 100% 通過)
+├── test_outdoor_hub.py   # 完整單元與整合測試套件 (10 大核心測試 100% 通過)
 ├── static/               # 自動繪製之 3 張 2500x1686 多頁籤 Rich Menu 圖檔
-│   ├── richmenu_food.png
-│   ├── richmenu_calorie.png
-│   └── richmenu_toilet.png
 ├── templates/
-│   └── index.html        # 三合一跨模組 Web 互動預覽與模擬測試儀表板
+│   ├── index.html        # 三合一跨模組 Web 互動預覽與模擬測試儀表板
+│   ├── liff_dashboard.html # LIFF 體態與近 7 天熱量趨勢 Chart.js 儀表板
+│   └── liff_map.html     # LIFF Leaflet.js 全螢幕友善公廁與美食地圖
 ├── requirements.txt      # Python 套件相依清單
 ├── Dockerfile            # 容器化部署設定
 ├── render.yaml           # Render 雲端一鍵部署設定

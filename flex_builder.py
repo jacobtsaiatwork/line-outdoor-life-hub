@@ -1064,3 +1064,232 @@ def build_hub_welcome_flex(remaining_calories: int = 2000) -> Dict[str, Any]:
             ]
         }
     }
+
+
+def build_bill_split_flex(
+    total_amount: float,
+    head_count: int,
+    tip_pct: float = 0.0,
+    note: str = ""
+) -> Dict[str, Any]:
+    """
+    外出聚餐快速分帳與 AA 制計算機 Flex 卡片
+    """
+    tip_amount = round(total_amount * (tip_pct / 100.0))
+    grand_total = round(total_amount + tip_amount)
+    per_person = round(grand_total / max(1, head_count))
+    remainder = grand_total - (per_person * head_count)
+
+    tip_text = f"{tip_pct:.0f}% (${tip_amount})" if tip_pct > 0 else "無 / 已內含"
+    rem_text = f"（整除差額：首位支付 ${per_person + remainder}）" if remainder != 0 else "（剛好整除）"
+
+    return {
+        "type": "bubble",
+        "size": "mega",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "backgroundColor": "#0F172A",
+            "paddingAll": "16px",
+            "contents": [
+                {"type": "text", "text": "💳 外出聚餐快速 AA 制分帳", "color": "#38BDF8", "weight": "bold", "size": "sm"},
+                {
+                    "type": "box",
+                    "layout": "baseline",
+                    "margin": "sm",
+                    "contents": [
+                        {"type": "text", "text": "每人應付：", "color": "#94A3B8", "size": "md"},
+                        {"type": "text", "text": f"${per_person:,}", "color": "#10B981", "weight": "bold", "size": "xxl"}
+                    ]
+                }
+            ]
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "sm",
+            "paddingAll": "16px",
+            "contents": [
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "contents": [
+                        {"type": "text", "text": "消費總額", "size": "xs", "color": "#64748B", "flex": 2},
+                        {"type": "text", "text": f"${round(total_amount):,}", "size": "xs", "weight": "bold", "color": "#0F172A", "align": "end", "flex": 3}
+                    ]
+                },
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "contents": [
+                        {"type": "text", "text": "服務費 / 小費", "size": "xs", "color": "#64748B", "flex": 2},
+                        {"type": "text", "text": tip_text, "size": "xs", "color": "#64748B", "align": "end", "flex": 3}
+                    ]
+                },
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "contents": [
+                        {"type": "text", "text": "分攤人數", "size": "xs", "color": "#64748B", "flex": 2},
+                        {"type": "text", "text": f"{head_count} 人", "size": "xs", "weight": "bold", "color": "#0F172A", "align": "end", "flex": 3}
+                    ]
+                },
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "contents": [
+                        {"type": "text", "text": "含費總計", "size": "xs", "color": "#64748B", "flex": 2},
+                        {"type": "text", "text": f"${grand_total:,}", "size": "xs", "weight": "bold", "color": "#DC2626", "align": "end", "flex": 3}
+                    ]
+                },
+                {"type": "separator", "margin": "md"},
+                {
+                    "type": "text",
+                    "text": f"💡 計算備註：{rem_text}",
+                    "size": "xxs",
+                    "color": "#64748B",
+                    "wrap": True,
+                    "margin": "sm"
+                }
+            ]
+        },
+        "footer": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "xs",
+            "paddingAll": "12px",
+            "backgroundColor": "#F8FAFC",
+            "contents": [
+                {
+                    "type": "button",
+                    "style": "secondary",
+                    "height": "sm",
+                    "action": {
+                        "type": "postback",
+                        "label": "🥗 依剩餘熱量抽下頓美食",
+                        "data": "action=draw_food&strict=1",
+                        "displayText": "🥗 幫我抽下一餐的不爆卡美食！"
+                    }
+                }
+            ]
+        }
+    }
+
+
+def build_food_poll_carousel(poll_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    建立「多人聚餐吃什麼？3選1快速投票」輪播卡片
+    """
+    poll_id = poll_data.get("poll_id", "poll_001")
+    title = poll_data.get("title", "聚餐吃什麼？快來投票決定！")
+    options = poll_data.get("options", [])
+    votes = poll_data.get("votes", {})
+
+    bubbles = []
+    for idx, opt in enumerate(options):
+        food_name = opt.get("name", f"選項 {idx+1}")
+        cat = opt.get("category", "人氣料理")
+        cal = opt.get("calories", 550)
+        img_url = opt.get("image_url", "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=700")
+
+        # 計算當前得票數
+        current_votes = sum(1 for v in votes.values() if v == idx)
+
+        vote_postback = f"action=vote_poll&poll_id={poll_id}&idx={idx}"
+
+        bubbles.append({
+            "type": "bubble",
+            "size": "kilo",
+            "hero": {
+                "type": "image",
+                "url": img_url,
+                "size": "full",
+                "aspectRatio": "16:9",
+                "aspectMode": "cover"
+            },
+            "header": {
+                "type": "box",
+                "layout": "vertical",
+                "backgroundColor": "#EA580C",
+                "paddingAll": "10px",
+                "contents": [
+                    {"type": "text", "text": f"🗳️ 候選 {idx + 1}：{cat}", "color": "#FFFFFF", "weight": "bold", "size": "xs"}
+                ]
+            },
+            "body": {
+                "type": "box",
+                "layout": "vertical",
+                "spacing": "xs",
+                "paddingAll": "14px",
+                "contents": [
+                    {"type": "text", "text": food_name, "weight": "bold", "size": "md", "wrap": True},
+                    {"type": "text", "text": f"🔥 約 {cal} kcal｜目前得票：{current_votes} 票", "size": "xs", "color": "#DC2626", "weight": "bold"}
+                ]
+            },
+            "footer": {
+                "type": "box",
+                "layout": "vertical",
+                "paddingAll": "12px",
+                "contents": [
+                    {
+                        "type": "button",
+                        "style": "primary",
+                        "color": "#10B981",
+                        "height": "sm",
+                        "action": {
+                            "type": "postback",
+                            "label": f"👍 投這家 ({current_votes}票)",
+                            "data": vote_postback,
+                            "displayText": f"👍 我投給「{food_name}」一票！"
+                        }
+                    }
+                ]
+            }
+        })
+
+    # 結果即時檢視卡
+    bubbles.append({
+        "type": "bubble",
+        "size": "kilo",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "backgroundColor": "#0F172A",
+            "paddingAll": "12px",
+            "contents": [
+                {"type": "text", "text": "📊 即時開票結果", "color": "#38BDF8", "weight": "bold", "size": "sm"}
+            ]
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "sm",
+            "paddingAll": "14px",
+            "contents": [
+                {"type": "text", "text": title, "weight": "bold", "size": "xs", "color": "#0F172A", "wrap": True},
+                {"type": "text", "text": f"總投票人數：{len(votes)} 人", "size": "xxs", "color": "#64748B"},
+                {"type": "separator", "margin": "sm"}
+            ]
+        },
+        "footer": {
+            "type": "box",
+            "layout": "vertical",
+            "paddingAll": "12px",
+            "contents": [
+                {
+                    "type": "button",
+                    "style": "secondary",
+                    "height": "sm",
+                    "action": {
+                        "type": "postback",
+                        "label": "🔄 刷新票數統計",
+                        "data": f"action=view_poll&poll_id={poll_id}",
+                        "displayText": "🔄 刷新目前投票結果！"
+                    }
+                }
+            ]
+        }
+    })
+
+    return {"type": "carousel", "contents": bubbles}
+

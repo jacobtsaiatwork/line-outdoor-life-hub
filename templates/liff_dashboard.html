@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>🔥 體態目標與熱量走勢儀表板 (LIFF)</title>
+    <!-- LIFF SDK -->
+    <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --bg-dark: #0f172a;
+            --card-dark: #1e293b;
+            --primary: #10b981;
+            --text-light: #f8fafc;
+            --text-muted: #94a3b8;
+            --border: #334155;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Microsoft JhengHei", sans-serif; }
+        body { background: var(--bg-dark); color: var(--text-light); padding: 16px; -webkit-tap-highlight-color: transparent; }
+        .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+        .user-pill { display: flex; align-items: center; gap: 8px; background: #1e293b; padding: 6px 12px; border-radius: 999px; font-size: 0.85rem; border: 1px solid var(--border); }
+        .user-avatar { width: 24px; height: 24px; border-radius: 50%; background: #3b82f6; }
+        .card { background: var(--card-dark); border: 1px solid var(--border); border-radius: 16px; padding: 16px; margin-bottom: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.25); }
+        .card-title { font-size: 1rem; font-weight: 700; margin-bottom: 12px; display: flex; align-items: center; gap: 6px; }
+        .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 16px; }
+        .stat-box { background: rgba(255,255,255,0.04); padding: 12px 8px; border-radius: 12px; text-align: center; }
+        .stat-val { font-size: 1.25rem; font-weight: 800; color: #10b981; }
+        .stat-lbl { font-size: 0.72rem; color: var(--text-muted); margin-top: 2px; }
+        .form-group { margin-bottom: 12px; }
+        label { display: block; font-size: 0.82rem; color: var(--text-muted); margin-bottom: 4px; }
+        .slider-row { display: flex; align-items: center; gap: 12px; }
+        input[type="range"] { flex: 1; accent-color: var(--primary); }
+        .slider-val { width: 55px; text-align: right; font-weight: 700; font-size: 0.95rem; color: var(--primary); }
+        select, input[type="text"] { width: 100%; padding: 10px; background: #0f172a; border: 1px solid var(--border); border-radius: 10px; color: #fff; font-size: 0.9rem; }
+        .btn-primary { width: 100%; padding: 12px; background: #10b981; color: #fff; border: none; border-radius: 12px; font-weight: 700; font-size: 1rem; cursor: pointer; transition: opacity 0.2s; margin-top: 8px; }
+        .btn-primary:active { opacity: 0.8; }
+        .btn-close { width: 100%; padding: 10px; background: transparent; color: var(--text-muted); border: 1px solid var(--border); border-radius: 10px; margin-top: 10px; font-weight: 600; cursor: pointer; }
+        .chart-container { position: relative; height: 200px; width: 100%; }
+        #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #10b981; color: #fff; padding: 10px 20px; border-radius: 20px; font-size: 0.9rem; font-weight: bold; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div>
+            <h2 style="font-size: 1.2rem;">📊 體態與熱量儀表板</h2>
+            <p style="font-size: 0.75rem; color: var(--text-muted);">Mifflin-St Jeor 個人化動態減脂管家</p>
+        </div>
+        <div class="user-pill" id="userPill">
+            <div class="user-avatar" id="avatarBox"></div>
+            <span id="userName">載入中...</span>
+        </div>
+    </div>
+
+    <!-- 7天熱量走勢圖 -->
+    <div class="card">
+        <div class="card-title">📈 近 7 天熱量攝取 vs 目標</div>
+        <div class="chart-container">
+            <canvas id="trendChart"></canvas>
+        </div>
+    </div>
+
+    <!-- 核心數據卡 -->
+    <div class="grid-3">
+        <div class="stat-box">
+            <div class="stat-val" id="bmrVal">--</div>
+            <div class="stat-lbl">基礎代謝 BMR</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-val" id="tdeeVal">--</div>
+            <div class="stat-lbl">總消耗 TDEE</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-val" id="targetCalVal">--</div>
+            <div class="stat-lbl">每日減脂目標</div>
+        </div>
+    </div>
+
+    <!-- 個人化參數動態試算調整面板 -->
+    <div class="card">
+        <div class="card-title">⚙️ 個人身形與活動量試算</div>
+        
+        <div class="form-group">
+            <label>性別</label>
+            <select id="genderSelect" onchange="recalculate()">
+                <option value="男">男生 (Male)</option>
+                <option value="女">女生 (Female)</option>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label>體重 (kg)</label>
+            <div class="slider-row">
+                <input type="range" id="weightRange" min="40" max="130" step="0.5" value="65" oninput="updateWeight(this.value)">
+                <span class="slider-val" id="weightText">65.0 kg</span>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label>身高 (cm)</label>
+            <div class="slider-row">
+                <input type="range" id="heightRange" min="130" max="210" step="1" value="172" oninput="updateHeight(this.value)">
+                <span class="slider-val" id="heightText">172 cm</span>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label>活動量等級</label>
+            <select id="activitySelect" onchange="recalculate()">
+                <option value="久坐">久坐型（辦公室工作，幾乎不運動）- x1.2</option>
+                <option value="輕度" selected>輕度運動（每週運動 1~3 天）- x1.375</option>
+                <option value="中度">中度運動（每週運動 3~5 天）- x1.55</option>
+                <option value="高度">高度運動（每週運動 6~7 天）- x1.725</option>
+            </select>
+        </div>
+
+        <button class="btn-primary" onclick="saveProfile()">💾 儲存並更新我的體態目標</button>
+        <button class="btn-close" onclick="closeLIFF()">關閉視窗返回聊天室</button>
+    </div>
+
+    <div id="toast">已成功更新！</div>
+
+    <script>
+        let currentUserId = "test_user_001";
+        let trendChartInstance = null;
+
+        function updateWeight(val) {
+            document.getElementById('weightText').innerText = parseFloat(val).toFixed(1) + ' kg';
+            recalculate();
+        }
+
+        function updateHeight(val) {
+            document.getElementById('heightText').innerText = parseInt(val) + ' cm';
+            recalculate();
+        }
+
+        function recalculate() {
+            const gender = document.getElementById('genderSelect').value;
+            const weight = parseFloat(document.getElementById('weightRange').value);
+            const height = parseFloat(document.getElementById('heightRange').value);
+            const act = document.getElementById('activitySelect').value;
+            const age = 28;
+
+            let bmr = (gender === "男") 
+                ? (10 * weight) + (6.25 * height) - (5 * age) + 5
+                : (10 * weight) + (6.25 * height) - (5 * age) - 161;
+
+            const factors = { "久坐": 1.2, "輕度": 1.375, "中度": 1.55, "高度": 1.725 };
+            const factor = factors[act] || 1.2;
+            const tdee = bmr * factor;
+            const target = Math.max(bmr, tdee - 400);
+
+            document.getElementById('bmrVal').innerText = Math.round(bmr);
+            document.getElementById('tdeeVal').innerText = Math.round(tdee);
+            document.getElementById('targetCalVal').innerText = Math.round(target);
+        }
+
+        async function initApp() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const uidParam = urlParams.get('user_id');
+            if (uidParam) currentUserId = uidParam;
+
+            // LIFF 初始化
+            try {
+                if (typeof liff !== "undefined") {
+                    await liff.init({ liffId: window.LIFF_ID || "2000000000-xxxxxx" });
+                    if (liff.isLoggedIn()) {
+                        const profile = await liff.getProfile();
+                        currentUserId = profile.userId;
+                        document.getElementById('userName').innerText = profile.displayName;
+                        if (profile.pictureUrl) {
+                            document.getElementById('avatarBox').style.backgroundImage = `url(${profile.pictureUrl})`;
+                            document.getElementById('avatarBox').style.backgroundSize = 'cover';
+                        }
+                    } else {
+                        document.getElementById('userName').innerText = "訪客模式";
+                    }
+                }
+            } catch (err) {
+                console.log("LIFF standalone fallback:", err);
+                document.getElementById('userName').innerText = "本地預覽";
+            }
+
+            loadProfileAndStats();
+        }
+
+        async function loadProfileAndStats() {
+            try {
+                const res = await fetch(`/api/liff/profile?user_id=${encodeURIComponent(currentUserId)}`);
+                if (res.ok) {
+                    const data = await res.json();
+                    document.getElementById('genderSelect').value = data.gender || "男";
+                    document.getElementById('weightRange').value = data.weight || 65;
+                    document.getElementById('weightText').innerText = (data.weight || 65) + ' kg';
+                    document.getElementById('heightRange').value = data.height || 172;
+                    document.getElementById('heightText').innerText = (data.height || 172) + ' cm';
+                    document.getElementById('activitySelect').value = data.activity || "輕度";
+                    recalculate();
+                }
+
+                const recRes = await fetch(`/api/liff/records?user_id=${encodeURIComponent(currentUserId)}`);
+                if (recRes.ok) {
+                    const recData = await recRes.json();
+                    renderChart(recData.history || []);
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        function renderChart(history) {
+            const ctx = document.getElementById('trendChart').getContext('2d');
+            const labels = history.map(h => h.display_date);
+            const dataVals = history.map(h => h.calories);
+            const targetVal = parseInt(document.getElementById('targetCalVal').innerText) || 2000;
+            const targetLine = history.map(() => targetVal);
+
+            if (trendChartInstance) trendChartInstance.destroy();
+
+            trendChartInstance = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: '實際攝取 (kcal)',
+                            data: dataVals,
+                            backgroundColor: 'rgba(16, 185, 129, 0.7)',
+                            borderRadius: 6
+                        },
+                        {
+                            label: '目標上限 (kcal)',
+                            data: targetLine,
+                            type: 'line',
+                            borderColor: '#f59e0b',
+                            borderWidth: 2,
+                            borderDash: [5, 5],
+                            pointRadius: 0,
+                            fill: false
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { grid: { display: false }, ticks: { color: '#94a3b8', font: { size: 10 } } },
+                        y: { grid: { color: 'rgba(255,255,255,0.06)' }, ticks: { color: '#94a3b8', font: { size: 10 } } }
+                    }
+                }
+            });
+        }
+
+        async function saveProfile() {
+            const gender = document.getElementById('genderSelect').value;
+            const weight = parseFloat(document.getElementById('weightRange').value);
+            const height = parseFloat(document.getElementById('heightRange').value);
+            const activity = document.getElementById('activitySelect').value;
+            const bmr = parseInt(document.getElementById('bmrVal').innerText);
+            const tdee = parseInt(document.getElementById('tdeeVal').innerText);
+            const target = parseInt(document.getElementById('targetCalVal').innerText);
+
+            try {
+                const res = await fetch('/api/liff/profile', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        user_id: currentUserId,
+                        gender, weight, height, activity,
+                        bmr, tdee, target_calories: target
+                    })
+                });
+
+                if (res.ok) {
+                    showToast("✅ 身形目標已成功儲存！");
+                    if (typeof liff !== "undefined" && liff.isLoggedIn()) {
+                        liff.sendMessages([
+                            {
+                                type: "text",
+                                text: `🎯 我已在 LIFF 更新體態目標！每日減脂目標：${target} kcal (TDEE: ${tdee} kcal)`
+                            }
+                        ]).catch(() => {});
+                    }
+                }
+            } catch (e) {
+                alert("儲存失敗：" + e.message);
+            }
+        }
+
+        function showToast(msg) {
+            const t = document.getElementById('toast');
+            t.innerText = msg;
+            t.style.opacity = '1';
+            setTimeout(() => { t.style.opacity = '0'; }, 2200);
+        }
+
+        function closeLIFF() {
+            if (typeof liff !== "undefined" && liff.isInClient()) {
+                liff.closeWindow();
+            } else {
+                window.close();
+            }
+        }
+
+        window.onload = initApp;
+    </script>
+</body>
+</html>

@@ -93,30 +93,32 @@
 
         <div class="grid-3">
             <div class="card food">
-                <h2>🍽️ 連動 1：依剩餘熱量智慧抽美食</h2>
-                <p>自動查詢您在「熱量管家」中今日剩餘卡路里額度，優先推薦不爆卡的人氣美食盲盒！</p>
+                <h2>🍽️ 連動 1：美食盲盒 × 聚餐投票</h2>
+                <p>依剩餘熱量智慧抽不爆卡美食，或在群組發起 3 選 1 投票！</p>
                 <div class="btn-group">
                     <button class="btn-food" onclick="simText('🥗 依剩餘熱量抽美食')">🥗 依剩餘熱量抽美食</button>
                     <button class="btn-food" onclick="simText('隨便吃什麼')">🎲 隨便抽一個</button>
+                    <button class="btn-food" onclick="simText('吃什麼投票')">🗳️ 聚餐 3 選 1 投票</button>
                 </div>
             </div>
 
             <div class="card cal">
-                <h2>🔥 連動 2：一鍵記熱量 & AI 營養師</h2>
-                <p>抽中美食後免打字、免拍照，點擊卡片按鈕一鍵寫入今日飲食紀錄並彈出更新後熱量儀表板！</p>
+                <h2>🔥 連動 2：AI 營養師 × LIFF 體態儀表板</h2>
+                <p>一鍵記入熱量、語音/照片估算，並支援在 LIFF 開啟 7 天熱量圖表與 AA 制分帳！</p>
                 <div class="btn-group">
-                    <button class="btn-cal" onclick="simPostback('action=eat_this&food_name=舒肥嫩雞胸健康水煮餐&calories=420&protein=38&carbs=45&fat=9')">🔥 模擬一鍵記入熱量 (+420卡)</button>
-                    <button class="btn-cal" onclick="simText('一碗滷肉飯加燙青菜')">✍️ 算「一碗滷肉飯加燙青菜」</button>
-                    <button class="btn-cal" onclick="simText('今日熱量')">📊 今日熱量儀表板</button>
+                    <button class="btn-cal" onclick="simPostback('action=eat_this&food_name=舒肥嫩雞胸健康水煮餐&calories=420&protein=38&carbs=45&fat=9')">🔥 一鍵記入熱量 (+420卡)</button>
+                    <button class="btn-cal" onclick="simText('分帳 1200 4人 10%')">💳 AA 制快速分帳</button>
+                    <button class="btn-cal" onclick="window.open('/liff/dashboard', '_blank')">📈 開啟 LIFF 體態圖表</button>
                 </div>
             </div>
 
             <div class="card toilet">
-                <h2>🚻 連動 3：GPS 一次傳送，雙模組共用</h2>
-                <p>傳送一次 LINE 定位，同時支援找周邊餐廳與友善洗手間（含 24H/無障礙/尿布檯標示），一鍵切換免重傳座標！</p>
+                <h2>🚻 連動 3：特優公廁雷達 × LIFF 全地圖</h2>
+                <p>整合環境部列管特優公廁、外出降雨/UV警報，一鍵在 Leaflet 全螢幕地圖上檢視周邊所有據點！</p>
                 <div class="btn-group">
-                    <button class="btn-toilet" onclick="simLocation('toilet')">📍 傳送定位找洗手間</button>
-                    <button class="btn-food" onclick="simPostback('action=switch_gps_mode&target=food')">🔄 用同一座標改找附近美食</button>
+                    <button class="btn-toilet" onclick="simLocation('toilet')">📍 傳送定位 (含天氣警報)</button>
+                    <button class="btn-toilet" onclick="window.open('/liff/map', '_blank')">🗺️ 開啟 LIFF 全螢幕地圖</button>
+                    <button class="btn-food" onclick="simPostback('action=switch_gps_mode&target=food')">🔄 用同一座標改找美食</button>
                 </div>
             </div>
         </div>

@@ -16,13 +16,16 @@
    - 自動儲存使用者最新經緯度至資料庫，並依當前模式回傳美食或洗手間輪播卡片
 """
 import re
+import random
+import uuid
 import urllib.parse
 from typing import Dict, Any, Optional, Tuple
 
 import database as db
-from food_module import draw_smart_food, search_food_by_keyword, get_nearby_restaurants
+from food_module import draw_smart_food, search_food_by_keyword, get_nearby_restaurants, FOOD_DATABASE
 from calorie_module import parse_tdee_command, calorie_ai_service
 from toilet_module import find_nearby_toilets
+from weather_module import get_outdoor_weather
 from flex_builder import (
     build_smart_food_flex,
     build_food_analysis_flex,
@@ -30,6 +33,8 @@ from flex_builder import (
     build_nearby_food_carousel,
     build_nearby_toilet_carousel,
     build_hub_welcome_flex,
+    build_bill_split_flex,
+    build_food_poll_carousel,
 )
 
 
@@ -45,25 +50,41 @@ def classify_intent(text: str) -> Tuple[str, Dict[str, Any]]:
     if lower in ["說明", "使用說明", "功能", "help", "幫助", "功能說明", "選單", "三合一", "hi", "hello", "你好", "您好"]:
         return ("help", {})
 
-    # 2. 今日熱量儀表板
+    # 2. 外出 AA 制快速分帳（例如：分帳 1200 4人、拆帳 1500 3人 10%）
+    if "分帳" in clean or "拆帳" in clean or lower.startswith("aa"):
+        nums = [float(n) for n in re.findall(r"\d+\.?\d*", clean)]
+        total = nums[0] if len(nums) >= 1 else 1000.0
+        heads = int(nums[1]) if len(nums) >= 2 else 2
+        tip = nums[2] if len(nums) >= 3 else (10.0 if ("10%" in clean or "一成" in clean) else 0.0)
+        return ("bill_split", {"total": total, "heads": heads, "tip": tip})
+
+    # 3. 多人聚餐吃什麼 3 選 1 投票
+    if any(k in clean for k in ["投票", "聚餐投票", "3選1", "吃什麼投票", "發起投票", "聚餐抽籤"]):
+        return ("food_poll", {})
+
+    # 4. 開啟全螢幕互動地圖 (LIFF)
+    if clean in ["地圖", "開啟地圖", "公廁地圖", "美食地圖", "全螢幕地圖"]:
+        return ("open_map", {})
+
+    # 5. 今日熱量儀表板
     if clean in ["今日飲食", "今日熱量", "今天吃多少", "儀表板", "熱量儀表板", "查看紀錄", "今日紀錄", "剩餘熱量"]:
         return ("calorie_dashboard", {})
 
-    # 3. 喝水打卡
+    # 6. 喝水打卡
     if "喝水" in clean:
         m = re.search(r"\d+", clean)
         ml = int(m.group(0)) if m else 300
         return ("water_log", {"amount_ml": ml})
 
-    # 4. 清空今日紀錄
+    # 7. 清空今日紀錄
     if clean in ["清空今日紀錄", "重置今日", "清空紀錄"]:
         return ("clear_records", {})
 
-    # 5. TDEE / 瘦身計劃設定
+    # 8. TDEE / 瘦身計劃設定
     if any(k in lower for k in ["瘦身計劃", "瘦身計畫", "tdee", "個人檔案"]):
         return ("tdee_setup", {"raw_text": clean})
 
-    # 6. 洗手間 / 廁所急救搜尋
+    # 9. 洗手間 / 廁所急救搜尋
     toilet_keywords = ["廁所", "洗手間", "化妝室", "尿急", "便所", "公廁", "無障礙洗手間", "尿布檯", "找廁所", "附近洗手間"]
     if any(k in clean for k in toilet_keywords):
         filter_type = None
@@ -77,9 +98,11 @@ def classify_intent(text: str) -> Tuple[str, Dict[str, Any]]:
             filter_type = "gas_station"
         elif "麥當勞" in clean or "速食" in clean:
             filter_type = "fastfood"
+        elif "特優" in clean or "政府" in clean:
+            filter_type = "grade_top"
         return ("toilet_search", {"filter_type": filter_type})
 
-    # 7. 美食盲盒抽籤（含「依剩餘熱量抽美食」、「吃什麼」、「隨便」）
+    # 10. 美食盲盒抽籤（含「依剩餘熱量抽美食」、「吃什麼」、「隨便」）
     food_draw_triggers = [
         "吃什麼", "隨便", "抽美食", "美食盲盒", "依剩餘熱量抽美食",
         "幫我依今日剩餘熱量抽不爆卡美食", "換一個", "再抽一次", "推薦美食", "今天吃什麼", "午餐吃什麼", "晚餐吃什麼"
@@ -88,7 +111,7 @@ def classify_intent(text: str) -> Tuple[str, Dict[str, Any]]:
         strict = "剩餘熱量" in clean or "不爆卡" in clean or "低卡" in clean
         return ("food_draw", {"strict": strict})
 
-    # 8. 用記憶定位找附近美食
+    # 11. 用記憶定位找附近美食
     food_search_triggers = [
         "附近美食", "周邊餐廳", "附近餐廳", "找附近美食", "找餐廳", "用定位找餐廳",
         "定位找餐廳", "找美食", "找吃的", "餐廳", "美食", "周邊美食", "餐廳雷達", "美食雷達"
@@ -96,7 +119,7 @@ def classify_intent(text: str) -> Tuple[str, Dict[str, Any]]:
     if clean in food_search_triggers or any(k in clean for k in ["定位找餐廳", "找餐廳", "附近美食", "周邊餐廳"]):
         return ("nearby_food", {})
 
-    # 9. 預設歸類為：自然語言飲食熱量估算（例如「一碗滷肉飯加燙青菜」）
+    # 12. 預設歸類為：自然語言飲食熱量估算（例如「一碗滷肉飯加燙青菜」）
     return ("calorie_estimate", {"query": clean})
 
 
@@ -126,6 +149,44 @@ def route_text_message(user_id: str, text: str) -> Dict[str, Any]:
             "flex_alt_text": "🧭 外出生活三合一超級選單指南",
             "flex_contents": flex,
             "data": cal_info
+        }
+
+    if intent == "bill_split":
+        total = float(meta.get("total", 1000.0))
+        heads = int(meta.get("heads", 2))
+        tip = float(meta.get("tip", 0.0))
+        flex = build_bill_split_flex(total, heads, tip)
+        return {
+            "intent": intent,
+            "text_message": f"💳 已為您計算分帳：總額 ${int(total):,}，共 {heads} 人分攤！",
+            "flex_alt_text": f"💳 外出分帳結果：每人約 ${round(total/max(1, heads)):,}",
+            "flex_contents": flex,
+            "data": {"total": total, "heads": heads, "tip": tip}
+        }
+
+    if intent == "food_poll":
+        candidates = random.sample(FOOD_DATABASE, min(3, len(FOOD_DATABASE)))
+        poll_id = f"poll_{uuid.uuid4().hex[:8]}"
+        poll_data = db.create_poll(poll_id, user_id, "🗳️ 聚餐吃什麼？快來投票決定！", candidates)
+        carousel = build_food_poll_carousel(poll_data)
+        return {
+            "intent": intent,
+            "text_message": "🗳️ 已為您發起「聚餐吃什麼？3選1投票」！邀請大家點擊按鈕投票：",
+            "flex_alt_text": "🗳️ 聚餐吃什麼？3選1快速投票",
+            "flex_contents": carousel,
+            "data": poll_data
+        }
+
+    if intent == "open_map":
+        lat = u_lat if u_lat is not None else 25.0330
+        lng = u_lng if u_lng is not None else 121.5654
+        map_url = f"/liff/map?lat={lat}&lng={lng}"
+        return {
+            "intent": intent,
+            "text_message": f"🗺️ 點擊開啟全螢幕救急洗手間與周邊美食互動地圖：\n{map_url}",
+            "flex_alt_text": "🗺️ 開啟外出生活全螢幕地圖",
+            "flex_contents": None,
+            "data": {"map_url": map_url, "lat": lat, "lng": lng}
         }
 
     if intent == "calorie_dashboard":
@@ -287,6 +348,34 @@ def handle_postback_action(user_id: str, postback_data: str) -> Dict[str, Any]:
     params = dict(urllib.parse.parse_qsl(postback_data))
     action = params.get("action", "")
 
+    if action == "vote_poll":
+        poll_id = params.get("poll_id", "")
+        idx = int(params.get("idx", 0))
+        poll_data = db.vote_poll(poll_id, user_id, idx)
+        if poll_data:
+            carousel = build_food_poll_carousel(poll_data)
+            opt_name = poll_data["options"][idx]["name"] if idx < len(poll_data["options"]) else "所選項目"
+            return {
+                "action": "vote_poll",
+                "text_message": f"✅ 您已成功投票給「{opt_name}」！最新即時開票：",
+                "flex_alt_text": "📊 聚餐投票戰況更新",
+                "flex_contents": carousel,
+                "data": poll_data
+            }
+
+    if action == "view_poll":
+        poll_id = params.get("poll_id", "")
+        poll_data = db.get_poll(poll_id)
+        if poll_data:
+            carousel = build_food_poll_carousel(poll_data)
+            return {
+                "action": "view_poll",
+                "text_message": "📊 目前最新即時投票結果如下：",
+                "flex_alt_text": "📊 即時開票結果",
+                "flex_contents": carousel,
+                "data": poll_data
+            }
+
     if action == "eat_this":
         food_name = urllib.parse.unquote(params.get("food_name", "精選餐點"))
         calories = int(params.get("calories", 500))
@@ -405,15 +494,18 @@ def handle_location_event(
     current_mode = override_mode or (profile.get("gps_mode") if profile else "food") or "food"
     db.save_user_location(user_id, lat, lng, address=address, gps_mode=current_mode)
 
+    weather = get_outdoor_weather(lat, lng)
+    weather_header = f"{weather['icon']} {weather['condition']} {weather['temperature']}°C｜{weather['advisory']}\n"
+
     if current_mode == "toilet":
         toilets = find_nearby_toilets(lat, lng)
         carousel = build_nearby_toilet_carousel(toilets, lat, lng)
         return {
             "mode": "toilet",
-            "text_message": f"📍 已記憶您的位置 ({address or '當前座標'})！為您找到附近 {len(toilets)} 處友善洗手間（點卡片下方可免重傳定位改找附近美食）：",
+            "text_message": f"{weather_header}📍 已記憶您的位置 ({address or '當前座標'})！為您找到附近 {len(toilets)} 處友善洗手間（含特優級/24H標示）：",
             "flex_alt_text": "🚻 附近救急友善洗手間雷達",
             "flex_contents": carousel,
-            "data": {"toilets": toilets, "lat": lat, "lng": lng}
+            "data": {"toilets": toilets, "lat": lat, "lng": lng, "weather": weather}
         }
     else:
         cal_info = db.get_remaining_calories(user_id)
@@ -421,8 +513,9 @@ def handle_location_event(
         carousel = build_nearby_food_carousel(restaurants, lat, lng, remaining_calories=cal_info["remaining_calories"])
         return {
             "mode": "food",
-            "text_message": f"📍 已記憶您的位置 ({address or '當前座標'})！為您推薦周邊餐廳（點卡片下方可一鍵記熱量，或免重傳定位改找附近洗手間）：",
+            "text_message": f"{weather_header}📍 已記憶您的位置 ({address or '當前座標'})！為您推薦周邊餐廳（點卡片下方可一鍵記熱量）：",
             "flex_alt_text": "🍽️ 附近美食餐廳雷達",
             "flex_contents": carousel,
-            "data": {"restaurants": restaurants, "lat": lat, "lng": lng}
+            "data": {"restaurants": restaurants, "lat": lat, "lng": lng, "weather": weather}
         }
+
